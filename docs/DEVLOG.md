@@ -31,6 +31,39 @@ Don't write an entry for routine progress. `git log` already covers that.
 
 ---
 
+## 2026-08-06 — Auto-capture collapses AUTHORIZED → CAPTURED into one event
+
+**Problem.** First webhook test failed with `illegal transition CREATED ->
+CAPTURED`. I had copied the five-state diagram literally, where every pledge
+visits AUTHORIZED first.
+
+**Tried.** Asserting the transition as illegal and making the test wait for a
+hypothetical `payment.authorized` event that Razorpay never sends in
+auto-capture mode.
+
+**Chose.** Read docs/00 §5.3: "Razorpay in auto-capture mode collapses
+AUTHORIZED → CAPTURED into a single payment.captured event." Made
+`CREATED -> CAPTURED` legal in the state machine while keeping AUTHORIZED as a
+modelled state for the manual-capture future. The test now reflects what the
+provider actually does.
+
+## 2026-08-06 — Docker Desktop fails: HCS service not available
+
+**Problem.** `docker info` returns "Docker Desktop is unable to start"; the
+engine logs `HCS_E_SERVICE_NOT_AVAILABLE` from WSL. `vmcompute` service is
+STOPPED and cannot be started (Access denied — needs elevation).
+
+**Tried.** `Start-Service vmcompute`, `sc.exe start vmcompute`. Both blocked
+without admin rights.
+
+**Chose.** Left the migrations unverified against live Postgres; the pledge
+suite runs fully offline against the fake gateway (that was the point of the
+three-method interface). To unblock: start Docker Desktop from an elevated
+terminal, or enable the Windows Hypervisor Platform feature and reboot.
+
+
+---
+
 ## Example entries
 
 Delete these once you have real ones — they're here to show the register and the
