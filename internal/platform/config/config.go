@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -111,7 +112,14 @@ func (c Config) Validate() error {
 }
 
 // MustLoad parses and validates, or exits. Failing at boot is the point.
+//
+// A local .env is loaded first if present (godotenv never overwrites a real
+// environment variable, so CI/docker env wins over the file). This is what makes
+// `cp .env.example .env && go run ./cmd/migrate up` work on a laptop.
 func MustLoad() Config {
+	// Best-effort: no .env in production is fine because the env is set there.
+	_ = godotenv.Load()
+
 	var c Config
 	if err := env.Parse(&c); err != nil {
 		log.Fatalf("config: %v", err)
