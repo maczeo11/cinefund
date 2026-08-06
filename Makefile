@@ -35,11 +35,19 @@ run-dispatcher: ## run the outbox -> Kafka dispatcher
 run-transcoder: ## run the Kafka -> FFmpeg worker pool
 	go run ./cmd/transcoder
 
-test:           ## unit tests only, no docker
-	go test ./... -short -race
+test:           ## unit tests, no docker (no race detector - see test-race)
+	go test ./... -short
+
+# The race detector needs cgo with a 64-bit C toolchain. The MinGW on this
+# machine is 32-bit ("sorry, unimplemented: 64-bit mode not compiled in"), so
+# the concurrency tests run in a Linux container instead. That is not a
+# workaround to feel bad about: P2 and P5 are only meaningful under -race, and
+# this keeps them one command away without installing a second compiler.
+test-race:      ## unit tests WITH the race detector, via docker
+	docker run --rm -v "$(CURDIR):/src" -w /src golang:1.26 go test ./... -short -race -count=1
 
 test-int:       ## integration tests, needs docker
-	go test ./... -race -tags=integration
+	go test ./... -tags=integration
 
 lint:           ## golangci-lint
 	golangci-lint run
