@@ -1,0 +1,43 @@
+# The linters that catch real bugs, not style opinions. See docs/15 §8.
+version: "2"
+
+linters:
+  enable:
+    - errcheck        # unchecked errors
+    - govet
+    - staticcheck
+    - ineffassign
+    - bodyclose       # unclosed HTTP response bodies
+    - rowserrcheck    # unchecked sql.Rows.Err()
+    - sqlclosecheck
+    - noctx           # HTTP requests without a context
+    - contextcheck
+    - depguard        # enforce the platform -> domain direction
+    - gosec
+
+  settings:
+    depguard:
+      rules:
+        # platform/* is infrastructure. It must never import a domain package.
+        # This is what makes the layering rule real rather than aspirational.
+        platform-is-pure:
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: "github.com/maczeo11/cinefund/internal/campaign"
+              desc: "platform must not import domain packages"
+            - pkg: "github.com/maczeo11/cinefund/internal/pledge"
+              desc: "platform must not import domain packages"
+            - pkg: "github.com/maczeo11/cinefund/internal/media"
+              desc: "platform must not import domain packages"
+            - pkg: "github.com/maczeo11/cinefund/internal/identity"
+              desc: "platform must not import domain packages"
+            - pkg: "github.com/maczeo11/cinefund/internal/outbox"
+              desc: "platform must not import domain packages"
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - errcheck
