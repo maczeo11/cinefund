@@ -31,6 +31,39 @@ Don't write an entry for routine progress. `git log` already covers that.
 
 ---
 
+## 2026-08-06 — Rotation sign conventions disagree between ffprobe's two sources
+
+**Problem.** `TestValidate_RotatedPortraitAccepted` asserted rotation 90 for a
+portrait clip and got 270. Both numbers swap the dimensions, so the ladder came
+out right either way and the bug would have sat there indefinitely — but they
+both write to one `media_assets.rotation` column, so a query like
+`WHERE rotation = 90` would have silently missed half the portrait uploads.
+
+**Tried.** Widening the test to accept either value. Wrong instinct: it hides a
+real inconsistency rather than fixing it, and the column would still hold two
+values for one physical orientation.
+
+**Chose.** Normalise both sources to "degrees clockwise the stored frame must be
+turned to display upright". The legacy `rotate` tag already uses that
+convention; the display matrix reports the transform it applies, which is the
+inverse, so side data gets negated. `-90` in the matrix and `90` in the tag now
+both parse to 90.
+
+## 2026-08-06 — docs/09 contradicts itself on the CODECS string
+
+**Problem.** Writing `BuildMasterPlaylist` against §7 of the media pipeline doc,
+which shows four different codec strings — `avc1.640028` (High@4.0) for 1080p
+down to `avc1.42c01e` (Baseline@3.0) for 360p. But §4 of the same document pins
+`-profile:v main -level 4.0` on every rung, which produces `avc1.4d0028` for all
+of them.
+
+**Chose.** The encoder settings win, and the codec string is now derived from
+them rather than kept in a parallel table that can drift. Worth recording
+because §7 explicitly warns that an inaccurate CODECS string makes Safari refuse
+a variant, usually silently — so following the example would have produced
+exactly the "works in Chrome, black screen on iPhone" bug the section warns
+about. A test asserts the string matches the encoder settings.
+
 ## 2026-08-06 — Auto-capture collapses AUTHORIZED → CAPTURED into one event
 
 **Problem.** First webhook test failed with `illegal transition CREATED ->

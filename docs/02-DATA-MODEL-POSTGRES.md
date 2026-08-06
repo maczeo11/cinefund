@@ -624,8 +624,27 @@ migrations/
 ├── 0013_outbox.up.sql
 ├── 0014_idempotency_keys.up.sql
 ├── 0015_audit_log.up.sql
+├── 0016_media.up.sql              media_assets + transcode_jobs (see below)
 └── (matching .down.sql for each)
 ```
+
+`0016` was not in the original plan: media assets and transcode jobs were Mongo
+collections until [ADR-0010](DECISIONS/ADR-0010-postgres-only.md) moved them
+here. Raw ffprobe output and the rendition list stay document-shaped in `JSONB`;
+everything that is queried or constrained is a real column. Two constraints
+there carry weight:
+
+- `transcode_jobs.uq_job_asset_version` — the same Kafka message delivered twice
+  produces one job (M8). At-least-once delivery makes this a constraint problem,
+  not an `if not exists` problem.
+- `transcode_jobs.worker_id` — a fencing token, not an owner label. The
+  heartbeat filters on it, so a reclaimed job's old worker gets zero rows and
+  knows to stop. See [09 §6](09-MEDIA-PIPELINE.md#6-the-worker).
+
+Once `media_assets` exists, `campaigns.pitch_asset_id` can become a real foreign
+key instead of the documented convention it was while it pointed into Mongo.
+That change is deferred to its own migration rather than bundled here, since it
+needs a backfill for any rows written in the meantime.
 
 Use `golang-migrate` or `goose`. Run migrations as a **separate binary in a
 separate step** (`cmd/migrate`), never on API startup — otherwise N replicas

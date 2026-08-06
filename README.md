@@ -11,10 +11,11 @@ the part where being wrong costs real money.
 
 **Done**
 
-- Migration runner + full Postgres schema (15 migrations: users, campaigns,
-  reward tiers, pledges, payment events, double-entry ledger, refunds, payouts,
-  entitlements, outbox, idempotency keys, audit log). All applied against a
-  live Postgres.
+- Migration runner + Postgres schema (16 migrations: users, campaigns, reward
+  tiers, pledges, payment events, double-entry ledger, refunds, payouts,
+  entitlements, outbox, idempotency keys, audit log, media assets and transcode
+  jobs). Applied against a live Postgres, including the deferred trigger that
+  makes an unbalanced ledger transaction fail at `COMMIT`.
 - Pledge service with a **gateway interface** so tests never touch the network:
   order creation, webhook signature verification, idempotent capture handling
   (Redis `SETNX` guard in front of a Postgres unique constraint), a state
@@ -23,13 +24,25 @@ the part where being wrong costs real money.
 - The whole pledge flow runs offline against a fake gateway and fake repo. The
   concurrency tests (50× the same webhook → exactly one capture) are part of
   the normal test run.
+- **Transcode pipeline**: ffprobe wrapper with rejection rules applied before
+  any encode starts, an ABR ladder that never upscales, the FFmpeg arg builder
+  with GOP settings pinned identically across rungs, duration-weighted progress,
+  the master playlist written last, and a worker whose lease uses `worker_id` as
+  a fencing token so a reclaimed job aborts instead of racing the new owner.
 - API skeleton with liveness/readiness probes; boots against the real stack.
 
 **Next**
 
 - HTTP layer: `POST /webhooks/razorpay`, `POST /campaigns/{id}/pledges`
+- Presigned upload + `POST /complete` so the transcoder has something to claim
 - Auth, campaigns, then the outbox → Kafka dispatcher
 - See [16 — Build order](docs/16-BUILD-ORDER.md) for the full plan.
+
+**Tests**
+
+`make test` runs the unit suite. `make test-race` runs the same suite under the
+race detector in a container — the race detector needs a 64-bit cgo toolchain,
+and the concurrency tests are the ones where that matters most.
 
 ## Stack
 

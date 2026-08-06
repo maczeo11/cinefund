@@ -293,36 +293,55 @@ naive `NumCPU` default makes everything slower.
 
 ### Job lease and reclaim
 
-```go
-// Claim: atomic, so two workers can't take the same job.
-job := jobs.FindOneAndUpdate(ctx,
-    bson.M{"_id": jobID, "status": "QUEUED"},
-    bson.M{"$set": bson.M{"status": "RUNNING", "worker_id": w.id,
-                          "lease_expires_at": time.Now().Add(60 * time.Second)}},
+Claim and reclaim are **one query**, not two. A single statement takes either a
+`QUEUED` job or one whose lease has expired, so there is no separate reclaim
+timer to run and no window between selecting a row and owning it.
+
+```sql
+WITH claimed AS (
+    UPDATE transcode_jobs
+       SET status = 'RUNNING', worker_id = $1,
+           lease_expires_at = now() + ($2 * interval '1 second'),
+           attempt = attempt + 1, started_at = COALESCE(started_at, now())
+     WHERE id = (
+         SELECT id FROM transcode_jobs
+          WHERE status = 'QUEUED'
+             OR (status = 'RUNNING' AND lease_expires_at < now())
+          ORDER BY (status = 'RUNNING'), created_at
+            FOR UPDATE SKIP LOCKED
+          LIMIT 1
+     )
+ RETURNING id, asset_id, pipeline_version, attempt
 )
-
-// Heartbeat every 20s while running:
-jobs.UpdateOne(ctx,
-    bson.M{"_id": jobID, "worker_id": w.id},
-    bson.M{"$set": bson.M{"lease_expires_at": time.Now().Add(60 * time.Second),
-                          "progress": p, "tasks": tasks}})
+SELECT c.*, a.storage_key, a.content_type, a.purpose
+  FROM claimed c JOIN media_assets a ON a.id = c.asset_id;
 ```
 
-The heartbeat filter includes `worker_id: w.id`. If another worker reclaimed the
-job (because this one stalled), the heartbeat matches zero documents — that's the
-signal to **abort immediately**, kill the FFmpeg process, and stop writing. Two
-workers writing the same rendition keys concurrently is the one genuinely
-corrupting failure mode in this pipeline.
+`FOR UPDATE SKIP LOCKED` is what lets N transcoder replicas run with zero
+coordination — each grabs a different row instead of all of them blocking on the
+same one. It is the same mechanism the outbox dispatcher uses. The `ORDER BY`
+prefers fresh work over expired leases, so a healthy backlog drains before
+anything that already failed once is retried.
 
-Reclaim, run on a timer by every worker:
+Heartbeat, every `LeaseTTL/3` while running:
 
-```go
-jobs.FindOneAndUpdate(ctx,
-    bson.M{"status": "RUNNING", "lease_expires_at": bson.M{"$lt": time.Now()}},
-    bson.M{"$set": bson.M{"worker_id": w.id, "lease_expires_at": in60s},
-           "$inc": bson.M{"attempt": 1}},
-    options.FindOneAndUpdate().SetSort(bson.M{"lease_expires_at": 1}))
+```sql
+UPDATE transcode_jobs
+   SET lease_expires_at = now() + ($3 * interval '1 second'),
+       progress = $4, speed = $5, tasks = $6
+ WHERE id = $1 AND worker_id = $2 AND status = 'RUNNING';
 ```
+
+**The `worker_id` predicate is the whole point.** It makes the heartbeat a
+fencing check rather than a liveness ping: if another worker reclaimed this job
+because this one stalled, the `UPDATE` matches zero rows, and that is the signal
+to **abort immediately** — cancel the job context, which kills the FFmpeg
+subprocess, and write nothing further. Two workers writing the same rendition
+keys concurrently is the one genuinely corrupting failure mode in this pipeline.
+
+A reclaimed worker must also skip its terminal status write. Otherwise a worker
+that was declared dead comes back, finishes, and marks the job `SUCCEEDED` on top
+of the new owner's in-progress state. Test M7.
 
 ### Cancellation
 
@@ -386,9 +405,21 @@ the whole job.
   target. Understating peak makes players pick a rung they can't sustain.
 - `CODECS` must be accurate or Safari and iOS refuse to play the variant, often
   silently. The profile/level hex maps directly to your `-profile:v`/`-level`:
-  `main@4.0` → `avc1.4d4028`, `high@4.0` → `avc1.640028`,
+  `main@4.0` → `avc1.4d0028`, `high@4.0` → `avc1.640028`,
   `baseline@3.0` → `avc1.42c01e`. Getting this wrong is a "works in Chrome,
   black screen on iPhone" bug.
+
+  > **Correction (2026-08-06).** The example playlist above is wrong, and was
+  > wrong in a way this very bullet warns about. It lists four *different* codec
+  > strings, but the FFmpeg command in [§4](#4-the-ffmpeg-command) pins
+  > `-profile:v main -level 4.0` on **every** rung — so every rendition is
+  > `avc1.4d0028`. Advertising High profile for a Main-encoded stream is exactly
+  > the silent-refusal bug described here.
+  >
+  > `ladder.go` therefore *derives* the codec string from the encoder settings
+  > rather than keeping a parallel table that can drift, and a test asserts the
+  > two agree. If you ever vary profile or level per rung, that function is the
+  > one place to change.
 - Order **highest bandwidth first**. Many players pick the first variant for the
   initial segment; some pick the last. Highest-first favours quality on good
   connections, and the ABR algorithm corrects within a segment or two either way.
