@@ -1,0 +1,45 @@
+# Environment
+.env
+.env.local
+*.env
+!.env.example
+
+# Build output
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test artefacts
+*.test
+*.out
+coverage.*
+/testdata/tmp/
+
+# Media — never commit real video. Small fixtures under testdata/ are the
+# exception and are added with `git add -f`.
+*.mp4
+*.mov
+*.mkv
+*.ts
+*.m3u8
+*.webm
+!testdata/sample_*.mp4
+!testdata/sample_*.mov
+
+# Local scratch
+/tmp/
+/var/
+*.log
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Docker volumes if bind-mounted locally
+/deploy/data/
