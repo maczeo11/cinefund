@@ -85,17 +85,16 @@ production and differ locally. Made `Audience` an explicit parameter on
 `PresignedGet` rather than a global, because the transcoder needs the internal
 one and the browser needs the public one.
 
-## 2026-08-04 — Change stream never fired
+## 2026-08-06 — Doc sync: Mongo/change-stream material is historical
 
-**Problem.** `mediawatcher` connected, logged no errors, and emitted nothing when
-an asset moved to `UPLOADED`.
+**Problem.** Several documents still described a `mediawatcher` + Mongo change
+stream for the media pipeline. That component was never built — MongoDB was
+dropped before any code was written ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md))
+and the outbox drives media jobs like every other event.
 
-**Tried.** Assumed the `$match` pipeline was wrong. Rewrote it three times.
-
-**Chose.** The pipeline was fine — the problem was the missing
-`SetFullDocument(options.UpdateLookup)`. Without it an `update` event contains
-only the changed fields, so `fullDocument.status` in the `$match` is empty and
-nothing ever matches. Also learned that `UpdateLookup` re-reads the document at
-lookup time, so the event can reflect a *later* state than the change that
-triggered it — the consumer now re-reads status defensively instead of trusting
-the event as a point-in-time snapshot.
+**Chose.** Kept the design-era documents in the tree (superseded material is
+history, per repo convention) but marked them with status banners pointing at
+ADR-0010, and corrected the README, local-dev, build-order and API docs to match
+the actual repository. Also removed an earlier draft devlog entry about a
+"change stream never fired" that described debugging a component that never
+existed — a fabricated wrong turn is worse than no entry at all.

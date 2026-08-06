@@ -4,6 +4,12 @@ Upload → probe → transcode → HLS. The largest phase in the build and the o
 most likely to run over. Everything here is written to be typed in rather than
 discovered.
 
+> **Status note (2026-08-06).** The change-stream trigger shown in the diagram
+> below is obsolete — MongoDB was dropped and the outbox now drives media jobs
+> like every other event ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md),
+> [08 §6](08-EVENTING-OUTBOX-KAFKA.md)). The FFmpeg ladder, args, lease and
+> temp-dir mechanics are unaffected.
+
 ---
 
 ## 1. The pipeline

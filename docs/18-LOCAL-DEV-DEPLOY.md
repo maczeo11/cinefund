@@ -7,9 +7,8 @@
 | Tool | Version | Notes |
 | --- | --- | --- |
 | Go | 1.26+ | |
-| Docker + Compose | v2 | 8 GB RAM allocated minimum — Kafka + Mongo + Postgres + MinIO is not light |
+| Docker + Compose | v2 | 8 GB RAM allocated minimum — Kafka + Postgres + MinIO is not light |
 | FFmpeg / ffprobe | 6.x | only if running `cmd/transcoder` outside Docker |
-| `golang-migrate` | latest | or `goose` |
 | `mc` (MinIO client) | latest | optional; the compose init handles buckets |
 | `ngrok` | latest | to receive real Razorpay test webhooks |
 
@@ -21,17 +20,16 @@
 git clone https://github.com/maczeo11/cinefund && cd cinefund
 cp .env.example .env          # fill in the Razorpay test keys
 make up                       # infra
-make migrate                  # postgres schema + mongo indexes
+make migrate                  # postgres schema
 make topics                   # kafka topics with correct partition counts
 make seed                     # dev data
-make run-api                  # :8080 HTTP, :9090 gRPC
+make run-api                  # :8080 HTTP
 ```
 
 In separate terminals:
 
 ```bash
 make run-dispatcher
-make run-mediawatcher
 make run-transcoder
 make run-scheduler
 ```
@@ -39,6 +37,11 @@ make run-scheduler
 `make dev` runs all of them under a process manager if you'd rather have one
 terminal. Keep them separable though — being able to kill just the dispatcher and
 watch `outbox_lag_seconds` climb is a useful thing to be able to do.
+
+`.env` is loaded at boot by the config package (godotenv) — no `dotenv`
+wrapper or shell sourcing needed. Missing mandatory variables fail fast at
+startup, and the JWT secrets are validated for length and difference before
+anything else runs.
 
 ---
 
@@ -54,25 +57,12 @@ services:
       POSTGRES_USER: cinefund
       POSTGRES_PASSWORD: cinefund
       POSTGRES_DB: cinefund
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]   # 5433 on the host: a local Postgres service already owns 5432
     volumes: ["pg_data:/var/lib/postgresql/data"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U cinefund"]
       interval: 5s
       retries: 20
-
-  mongo:
-    image: mongo:7
-    command: ["--replSet", "rs0", "--bind_ip_all"]
-    ports: ["27017:27017"]
-    volumes: ["mongo_data:/data/db"]
-    healthcheck:
-      test: >
-        mongosh --quiet --eval "
-        try { rs.status().ok }
-        catch (e) { rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok }"
-      interval: 5s
-      retries: 30
 
   redis:
     image: redis:7-alpine
@@ -84,7 +74,7 @@ services:
       retries: 20
 
   kafka:
-    image: bitnami/kafka:3.7
+    image: bitnamilegacy/kafka:3.9.0
     ports: ["9092:9092"]
     environment:
       KAFKA_CFG_NODE_ID: "0"
@@ -134,7 +124,6 @@ services:
 
 volumes:
   pg_data: {}
-  mongo_data: {}
   kafka_data: {}
   minio_data: {}
 ```
@@ -160,74 +149,40 @@ volumes:
 ```bash
 APP_ENV=development
 PORT=8080
-GRPC_PORT=9090
 LOG_LEVEL=info
 
 # Postgres
-POSTGRES_URL=postgres://cinefund:cinefund@localhost:5432/cinefund?sslmode=disable
-POSTGRES_MAX_CONNS=25
-POSTGRES_MIN_CONNS=5
-
-# Mongo — replicaSet + directConnection are REQUIRED for change streams locally
-MONGO_URI=mongodb://localhost:27017/?replicaSet=rs0&directConnection=true
-MONGO_DATABASE=cinefund
+POSTGRES_DSN=postgres://cinefund:cinefund@localhost:5433/cinefund?sslmode=disable
+POSTGRES_MAX_CONNS=10
 
 # Redis
-REDIS_URL=redis://localhost:6379/0
-REDIS_READ_TIMEOUT=50ms
-CACHE_VERSION=v1
-CACHE_ENABLED=true
+REDIS_ADDR=localhost:6379
+REDIS_DB=0
 
 # Kafka
 KAFKA_BROKERS=localhost:9092
-KAFKA_CLIENT_ID=cinefund
 
 # Object storage — two endpoints, deliberately (see doc 10 §6)
-S3_ENDPOINT=localhost:9000
-S3_PUBLIC_ENDPOINT=localhost:9000
+S3_ENDPOINT=http://localhost:9000
+S3_PUBLIC_ENDPOINT=http://localhost:9000
 S3_ACCESS_KEY=minioadmin
 S3_SECRET_KEY=minioadmin
+S3_REGION=us-east-1
 S3_BUCKET_ORIGINALS=cinefund-originals
 S3_BUCKET_MEDIA=cinefund-media
-S3_BUCKET_PUBLIC=cinefund-public
-S3_USE_SSL=false
-S3_REGION=us-east-1
 
 # Auth — must be >= 32 bytes and DIFFERENT from each other
 JWT_ACCESS_SECRET=
 JWT_REFRESH_SECRET=
-ACCESS_TOKEN_TTL=15m
-REFRESH_TOKEN_TTL=720h
 
-# Razorpay (test mode)
+# Razorpay (test mode) — leave the keys blank to use the fake gateway
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
 RAZORPAY_WEBHOOK_SECRET=
 
-# Platform
-PLATFORM_FEE_PERCENT=7
-EARLY_ACCESS_DAYS=30
-
 # Transcoding
-FFMPEG_PATH=ffmpeg
-FFPROBE_PATH=ffprobe
 TRANSCODE_CONCURRENCY=2
-FFMPEG_THREADS=4
-TRANSCODE_WORK_DIR=/var/tmp/cinefund
-TRANSCODE_MIN_FREE_BYTES=10737418240
-TRANSCODE_JOB_TIMEOUT=2h
-TRANSCODE_LEASE_TTL=60s
-PIPELINE_VERSION=1
-HLS_SEGMENT_SECONDS=6
-
-# Email
-SMTP_HOST=localhost
-SMTP_PORT=1025
-EMAIL_FROM=noreply@cinefund.local
-
-# Telemetry
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
-TRACE_SAMPLE_RATIO=1.0
+TRANSCODE_TMP_DIR=./tmp/transcode
 ```
 
 Generate secrets:
@@ -303,12 +258,11 @@ A single VM, Docker Compose, Caddy for TLS. Not Kubernetes — see
 │                                          │
 │  Caddy (TLS, :443) ──► api ×2            │
 │                        dispatcher ×1     │
-│                        mediawatcher ×1   │
 │                        transcoder ×2     │
 │                        notifier ×1       │
 │                        scheduler ×1      │
 │                                          │
-│  postgres, mongo, redis, kafka           │
+│  postgres, redis, kafka                  │
 └──────────────────────────────────────────┘
         │
         └──► S3 (media) ──► CDN
@@ -322,11 +276,9 @@ Differences from local:
 | Object storage | real S3 (or MinIO on a separate volume), CDN in front of renditions |
 | Secrets | injected by the orchestrator, never in a committed file |
 | Postgres | daily `pg_dump` to `cinefund-backup`, 30-day retention, **restore tested monthly** |
-| Mongo | `mongodump` daily |
 | Sampling | `TRACE_SAMPLE_RATIO=0.1`, money paths forced to 1.0 |
 | Log level | `info` |
 | `scheduler` | exactly 1 replica, plus the Redis lease as a safety net |
-| `mediawatcher` | exactly 1 replica (single resume token) |
 | `transcoder` | CPU-limited so FFmpeg can't starve Postgres |
 
 **A backup you have never restored is not a backup.** Put a monthly restore drill
@@ -339,9 +291,9 @@ R1–R7 against it. If they pass, the backup is real.
 
 ```bash
 git pull
-docker compose build api transcoder dispatcher mediawatcher notifier scheduler
+docker compose build api transcoder dispatcher notifier scheduler
 docker compose run --rm api ./migrate up      # migrations FIRST, as a separate step
-docker compose up -d --no-deps api dispatcher mediawatcher transcoder notifier scheduler
+docker compose up -d --no-deps api dispatcher transcoder notifier scheduler
 docker compose ps
 curl -sf https://cinefund.example/health/ready
 ```
@@ -391,7 +343,7 @@ these automatically within 15 minutes; if it hasn't, the sweep isn't running.
 ### Transcode jobs are queuing
 
 ```bash
-mongosh --eval 'db.transcode_jobs.aggregate([{$group:{_id:"$status",n:{$sum:1}}}])'
+psql -c "SELECT status, count(*) FROM transcode_jobs GROUP BY 1;"
 docker compose logs --tail 200 transcoder | grep -i ffmpeg
 df -h /var/tmp
 ```

@@ -2,6 +2,11 @@
 
 Load testing, the bottlenecks you'll find, profiling, and the capacity model.
 
+> **Status note (2026-08-06).** MongoDB was dropped
+> ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md)); where this doc reads "the
+> Mongo projection does X", read "the Postgres `JSONB` projection does X". The
+> methodology and capacity model are unchanged.
+
 This document has an unusual property: **the results section is meant to be
 filled in with your numbers.** A performance doc with predictions and no
 measurements is worth nothing. One with before/after numbers is the strongest

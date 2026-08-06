@@ -1,228 +1,118 @@
 # CineFund
 
-**Crowdfunding and streaming for short films.** Creators launch campaigns for films
-that don't exist yet, backers fund them, and the films that get funded are
-transcoded, packaged and streamed on the same platform.
+Crowdfunding and streaming for short films. Creators launch campaigns for films
+that don't exist yet, backers fund them, and funded films get transcoded and
+streamed on the same platform.
 
-The design came first, deliberately: every line is written against these
-documents, so the documents have to be precise enough to code from without
-re-deciding anything mid-file.
+## What's here right now
 
-**Current state:** Group A0/A1 scaffolding is in — module skeleton, local
-infrastructure, config/logging/errors, the migration runner and the money-path
-schema (pledges, payment events, refunds, the double-entry ledger with its
-deferred balance trigger, and the outbox). `go build ./...` is green. The
-domain services are next; see [16 — Build order](docs/16-BUILD-ORDER.md).
+Work in progress. The money path is the first thing being built, because it's
+the part where being wrong costs real money.
 
----
+**Done**
 
-## Why this project exists
+- Migration runner + full Postgres schema (15 migrations: users, campaigns,
+  reward tiers, pledges, payment events, double-entry ledger, refunds, payouts,
+  entitlements, outbox, idempotency keys, audit log). All applied against a
+  live Postgres.
+- Pledge service with a **gateway interface** so tests never touch the network:
+  order creation, webhook signature verification, idempotent capture handling
+  (Redis `SETNX` guard in front of a Postgres unique constraint), a state
+  machine, and ledger entries written in the same transaction as the state
+  change.
+- The whole pledge flow runs offline against a fake gateway and fake repo. The
+  concurrency tests (50× the same webhook → exactly one capture) are part of
+  the normal test run.
+- API skeleton with liveness/readiness probes; boots against the real stack.
 
-The interesting part is not the CRUD. It's the four places where a naive
-implementation is quietly wrong:
+**Next**
 
-1. **A payment webhook arrives twice.** Razorpay retries on timeout. A naive
-   `campaign.raised += amount` double-credits the campaign. Fixed with a Redis
-   `SETNX` guard in front of a Postgres unique constraint — belt and braces,
-   because Redis can lose the key.
-2. **The database commits and the process dies before publishing.** The pledge
-   is recorded but no receipt email is ever sent and the search index goes
-   stale. Fixed with a transactional outbox: the domain write and the event
-   insert are one Postgres transaction, and a separate dispatcher moves rows to
-   Kafka.
-3. **Transcoding a 4 GB film inside an HTTP handler.** Fixed by never letting
-   bytes touch the API: presigned upload straight to object storage, a Mongo
-   change stream turning the status flip into a job, and a pool of Go workers
-   shelling out to FFmpeg.
-4. **All-or-nothing funding.** Money is held, not spent. If the campaign misses
-   its goal at the deadline, every pledge refunds. That requires a real ledger,
-   not an integer column.
-
-Everything else in this spec exists to serve those four.
-
----
+- HTTP layer: `POST /webhooks/razorpay`, `POST /campaigns/{id}/pledges`
+- Auth, campaigns, then the outbox → Kafka dispatcher
+- See [16 — Build order](docs/16-BUILD-ORDER.md) for the full plan.
 
 ## Stack
 
-| Concern | Choice | Why |
-| --- | --- | --- |
-| HTTP API | Go 1.26 + [Gin](https://github.com/gin-gonic/gin) | Same framework as the MagicStream server, so the middleware ports over |
-| Everything persistent | **PostgreSQL 16** (`pgx/v5`, no ORM) | Real ACID, `CHECK`/`UNIQUE` constraints that make double-crediting impossible at the storage layer, `FOR UPDATE SKIP LOCKED` for the outbox dispatcher, and `JSONB` for the genuinely document-shaped parts (ffprobe output, rendition lists) |
-| Cache, locks, limits | **Redis 7** | Response cache, token-bucket rate limiting (Lua), idempotency fast path, distributed locks |
-| Event bus | **Kafka** (`franz-go`) | Durable, replayable, partitioned-by-aggregate domain events |
-| Object storage | **MinIO** locally, S3-compatible in prod (`minio-go/v7`) | Presigned PUT for uploads, presigned GET for playback |
-| Transcoding | **FFmpeg / ffprobe** subprocess | HLS ABR ladder, thumbnails, sprite sheets |
-| Payments | **Razorpay** (Orders + Webhooks) | Card data never touches this codebase |
-| Telemetry | `log/slog`, OpenTelemetry, Prometheus | Trace IDs propagate across HTTP → Kafka → worker |
+| Concern | Choice |
+| --- | --- |
+| API | Go 1.26, Gin |
+| Database | PostgreSQL 16 (`pgx/v5`, no ORM) — one datastore for everything |
+| Cache / locks | Redis 7 |
+| Event bus | Kafka (`franz-go`), fed by a transactional outbox |
+| Object storage | MinIO locally, S3-compatible in prod |
+| Transcoding | FFmpeg subprocess, HLS ABR |
+| Payments | Razorpay Orders + Webhooks |
+| Telemetry | `log/slog`, OpenTelemetry, Prometheus |
 
-### Why one datastore, not two
+A word on the single datastore: this was originally Postgres + MongoDB (Mongo
+for the catalog, Postgres for money). That was reversed before any code was
+written — the outbox does the job change streams were brought in for, and one
+store keeps every financial invariant declarative. Reasoning in
+[ADR-0010](docs/DECISIONS/ADR-0010-postgres-only.md).
 
-An earlier revision split this across Postgres and MongoDB — Postgres for money,
-Mongo for the catalog and media pipeline. That was reversed before any code was
-written. The full reasoning is in
-[ADR-0010](docs/DECISIONS/ADR-0010-postgres-only.md); the short version:
+## Why this project exists
 
-> **The outbox already solves reliable publishing.** Mongo was brought in partly
-> for change streams, on the grounds that Postgres has no CDC without Debezium —
-> which is exactly *why the outbox exists*. Once you have the outbox, the change
-> stream is a second mechanism doing the first one's job.
+The interesting parts are the four places a naive implementation is quietly
+wrong:
 
-The catalog's genuinely document-shaped data — ffprobe output, rendition lists —
-lives in `JSONB` columns. Nothing here is queried in a way that needed Mongo's
-operators, and a single store means every financial invariant stays declarative
-and every read is transactionally consistent with the write that produced it.
+1. **A payment webhook arrives twice.** Razorpay retries on timeout; a naive
+   `campaign.raised += amount` double-credits the campaign. Belt and braces
+   here: a Redis `SETNX` guard in front of a Postgres unique constraint,
+   because Redis can lose the key.
+2. **The DB commits and the process dies before publishing.** The pledge is
+   recorded but no receipt email is sent and the search index goes stale. A
+   transactional outbox makes the domain write and the event insert one
+   Postgres transaction.
+3. **Transcoding a 4 GB film inside an HTTP handler.** Fixed by never letting
+   bytes touch the API: presigned upload straight to object storage, then a
+   pool of Go workers shelling out to FFmpeg.
+4. **All-or-nothing funding.** Money is held, not spent. If a campaign misses
+   its goal at the deadline, every pledge refunds — that needs a real
+   double-entry ledger, not an integer column.
 
-So there is **one event mechanism**:
+## Running it
 
-| Source of truth | Mechanism | Used for |
-| --- | --- | --- |
-| Postgres | Transactional outbox table + dispatcher | Every domain event — money, campaign lifecycle, and media pipeline transitions alike |
-
-[ADR-0001](docs/DECISIONS/ADR-0001-polyglot-persistence.md) and
-[ADR-0004](docs/DECISIONS/ADR-0004-outbox-vs-change-streams.md) are kept in the
-tree as superseded records: how the thinking moved is worth more than a tidy
-history.
-
----
-
-## System at a glance
-
-```mermaid
-flowchart TB
-    subgraph Clients
-        WEB[React SPA]
-        RZP[Razorpay Checkout]
-    end
-
-    subgraph Edge
-        API[cmd/api<br/>Gin HTTP]
-    end
-
-    subgraph Workers
-        DISP[cmd/dispatcher<br/>Postgres outbox → Kafka]
-        TRANS[cmd/transcoder<br/>Kafka → FFmpeg pool]
-        NOTIF[cmd/notifier<br/>Kafka → email]
-        SCHED[cmd/scheduler<br/>deadline sweep, reconcile]
-    end
-
-    subgraph Stores
-        PG[(PostgreSQL<br/>everything persistent)]
-        RD[(Redis<br/>cache, limits, locks)]
-        S3[(MinIO / S3<br/>originals + renditions)]
-        KF[[Kafka]]
-    end
-
-    WEB -->|REST + cookies| API
-    WEB -->|presigned PUT| S3
-    WEB -->|checkout| RZP
-    RZP -->|webhook| API
-
-    API --> PG
-    API --> RD
-    API -->|presign| S3
-
-    PG --> DISP --> KF
-    KF --> TRANS
-    KF --> NOTIF
-
-    TRANS -->|read original / write renditions| S3
-    TRANS -->|job status + renditions| PG
-    SCHED --> PG
+```bash
+cp .env.example .env
+make up          # postgres, redis, kafka, minio in Docker
+make migrate     # apply schema
+make run-api     # :8080
 ```
 
----
+The pledge tests don't need any of that:
 
-## Read the documents in this order
+```bash
+go test ./internal/pledge/...
+```
 
-Each one assumes you've read the ones above it.
+## Documents
 
-| # | Document | What you get from it |
+The design was written up before the code; the docs are the reference the code
+is checked against. [Start here](docs/00-PRODUCT-SPEC.md).
+
+| # | Doc | Covers |
 | --- | --- | --- |
-| 00 | [Product spec](docs/00-PRODUCT-SPEC.md) | Actors, the funding rules, state machines, glossary |
-| 01 | [Architecture](docs/01-ARCHITECTURE.md) | Components, boundaries, request lifecycle, failure modes |
-| 02 | [Postgres data model](docs/02-DATA-MODEL-POSTGRES.md) | Every table, column, index, constraint and invariant |
-| 03 | [Mongo data model](docs/03-DATA-MODEL-MONGO.md) | Every collection, document shape and index |
-| 04 | [API spec](docs/04-API-SPEC.md) | Every endpoint: request, response, errors, status codes |
-| 05 | [Auth & security](docs/05-AUTH-SECURITY.md) | JWT rotation with reuse detection, RBAC, threat model |
-| 06 | [Payments (Razorpay)](docs/06-PAYMENTS-RAZORPAY.md) | Order creation, webhook verification, idempotency, refunds |
-| 07 | [Ledger](docs/07-LEDGER.md) | Double-entry accounts, every money movement, reconciliation |
-| 08 | [Eventing](docs/08-EVENTING-OUTBOX-KAFKA.md) | Outbox, change streams, topics, envelope, retries, DLQ |
-| 09 | [Media pipeline](docs/09-MEDIA-PIPELINE.md) | Upload → probe → transcode → HLS, the FFmpeg specifics |
-| 10 | [Object storage](docs/10-OBJECT-STORAGE.md) | Bucket layout, key scheme, presigning, lifecycle rules |
-| 11 | [Caching](docs/11-CACHING-REDIS.md) | Key scheme, TTLs, invalidation, stampede protection |
-| 12 | [Rate limiting](docs/12-RATE-LIMITING.md) | Layered buckets, the Lua script, headers, tuning |
-| 13 | [gRPC control plane](docs/13-GRPC-CONTROL-PLANE.md) | Protobuf contracts, streaming progress, cancellation |
-| 14 | [Observability](docs/14-OBSERVABILITY.md) | Logs, metrics, traces, SLOs, the alerts that matter |
-| 15 | [Project layout](docs/15-PROJECT-LAYOUT.md) | The exact file tree, and what every package owns |
-| 16 | [Build order](docs/16-BUILD-ORDER.md) | 12 phases, each with acceptance criteria |
-| 17 | [Testing strategy](docs/17-TESTING-STRATEGY.md) | What to unit test, what needs testcontainers |
-| 18 | [Local dev & deploy](docs/18-LOCAL-DEV-DEPLOY.md) | docker-compose, env vars, migrations, runbook |
-| 19 | [Performance](docs/19-PERFORMANCE.md) | load tests, the bottlenecks, profiling, capacity model, 100× |
-| — | [Decision records](docs/DECISIONS/README.md) | Why each contested choice went the way it did |
-| — | [Devlog](docs/DEVLOG.md) | Running notes: what broke, what was tried, what was chosen |
-
----
-
-## Ground rules for the implementation
-
-These are the conventions the whole codebase assumes. Deciding them once here
-means never deciding them again in a file.
-
-1. **Money is `BIGINT` paise. Never float, never decimal-in-Go.** A ₹500 pledge
-   is `50000`. Formatting to rupees happens in the presentation layer only.
-2. **Every mutating endpoint that a client can retry takes an
-   `Idempotency-Key` header.** See [06](docs/06-PAYMENTS-RAZORPAY.md#idempotency-keys-on-client-requests).
-3. **Handlers do no business logic.** `handler` parses and validates, `service`
-   decides, `repo` persists. A handler that touches `pgx` directly is a bug.
-4. **Every external call takes a `context.Context` with a deadline.** No
-   `context.Background()` below `main` and the consumer loops.
-5. **Errors are typed** (`platform/errs`) and mapped to HTTP status in exactly
-   one place — the error middleware. Handlers never call `c.JSON(500, ...)`.
-6. **Every Kafka consumer is idempotent**, because delivery is at-least-once.
-   Assume every message arrives twice and out of order.
-7. **No secret is ever logged**, and no full payment payload is logged. Log
-   `event_id`, `payment_id`, amount, and status — nothing else.
-8. **Migrations are forward-only and numbered.** No editing a committed
-   migration, ever.
-9. **The API never streams video bytes.** It signs URLs. The one exception is
-   the HLS playlist rewriter, which serves text.
-
----
-
-## Build plan
-
-Built as a **vertical slice first** — the video path end to end before any auth
-or money — so the largest unknown is de-risked in week 2 rather than week 9, and
-every stopping point is a working system rather than N half-built layers.
-
-| Group | Scope | Hours | Milestone |
-| --- | --- | --- | --- |
-| **A** — video spine | upload → transcode → HLS → plays in a browser | 45 | video plays |
-| **B** — money spine | auth, rate limiting, campaigns, payments + idempotency, ledger, outbox → Kafka, change streams | 67 | money works |
-| **C** — completion | entitlements, gRPC, concurrency tests, load test with before/after numbers, fault-injection recording | 41 | **complete and demonstrable** |
-| **D** — depth | read model, caching, DLQ, reconciliation, observability, ops CLI, pprof | 71 | production-shaped |
-
-**Group C is the checkpoint that matters.** After it, every capability claimed
-here is demonstrable. Group D is built afterwards and does not gate anything.
-
-Full phase-by-phase plan, acceptance criteria, calendar and risk register in
-[docs/16 — Build order](docs/16-BUILD-ORDER.md).
-
-### Size
-
-Group A+B+C is ~6,400 lines of Go you write (~9,600 in the repo including tests
-and generated protobuf). Of those, roughly **2,500 involve a real decision** —
-the rest is six domains sharing one five-file shape. A ~480-line core carries
-almost all of the design risk; [16 §3](docs/16-BUILD-ORDER.md#3-what-to-hand-write)
-names the files.
-
-### Schedule risk
-
-The FFmpeg pipeline (A3–A4) is the largest single risk. It is scheduled **first**
-for that reason. Budget 26 hours and expect the ABR ladder, keyframe alignment
-and pixel-format handling to consume most of it.
-
----
+| 00 | [Product spec](docs/00-PRODUCT-SPEC.md) | actors, funding rules, state machines, glossary |
+| 01 | [Architecture](docs/01-ARCHITECTURE.md) | components, request lifecycle, failure modes |
+| 02 | [Postgres data model](docs/02-DATA-MODEL-POSTGRES.md) | tables, indexes, constraints, invariants |
+| 04 | [API spec](docs/04-API-SPEC.md) | endpoints, errors, status codes |
+| 05 | [Auth & security](docs/05-AUTH-SECURITY.md) | JWT rotation, RBAC, threat model |
+| 06 | [Payments (Razorpay)](docs/06-PAYMENTS-RAZORPAY.md) | order creation, webhook verification, idempotency, refunds |
+| 07 | [Ledger](docs/07-LEDGER.md) | accounts, money movements, reconciliation |
+| 08 | [Eventing](docs/08-EVENTING-OUTBOX-KAFKA.md) | outbox, topics, retries, DLQ |
+| 09 | [Media pipeline](docs/09-MEDIA-PIPELINE.md) | upload → probe → transcode → HLS |
+| 10 | [Object storage](docs/10-OBJECT-STORAGE.md) | buckets, keys, presigning |
+| 11 | [Caching](docs/11-CACHING-REDIS.md) | key scheme, TTLs, invalidation |
+| 12 | [Rate limiting](docs/12-RATE-LIMITING.md) | token buckets, headers |
+| 13 | [gRPC control plane](docs/13-GRPC-CONTROL-PLANE.md) | worker contracts, progress |
+| 14 | [Observability](docs/14-OBSERVABILITY.md) | logs, metrics, traces, SLOs |
+| 15 | [Project layout](docs/15-PROJECT-LAYOUT.md) | file tree, package ownership |
+| 16 | [Build order](docs/16-BUILD-ORDER.md) | phases, acceptance criteria, calendar |
+| 17 | [Testing strategy](docs/17-TESTING-STRATEGY.md) | unit vs integration split |
+| 18 | [Local dev & deploy](docs/18-LOCAL-DEV-DEPLOY.md) | compose, env, runbook |
+| 19 | [Performance](docs/19-PERFORMANCE.md) | load tests, capacity, bottlenecks |
+| — | [Decision records](docs/DECISIONS/README.md) | why contested choices went the way they did |
+| — | [Devlog](docs/DEVLOG.md) | running notes: what broke, what was tried |
 
 ## License
 

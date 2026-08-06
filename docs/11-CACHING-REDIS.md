@@ -5,6 +5,11 @@ because they have different failure tolerances: losing a cache entry is free,
 losing a rate-limit counter is a small security gap, and losing a distributed
 lock can corrupt data.
 
+> **Status note (2026-08-06).** Cache-miss fallbacks that read from "Mongo" now
+> read from Postgres (the two-store split was reversed — 
+> [ADR-0010](DECISIONS/ADR-0010-postgres-only.md)). The key schemes, TTLs and
+> stampede handling are unchanged.
+
 | Job | Loss tolerance | Section |
 | --- | --- | --- |
 | Response cache | free | §2–4 |

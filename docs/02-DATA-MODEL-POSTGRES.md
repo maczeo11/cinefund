@@ -158,7 +158,7 @@ CREATE TABLE campaigns (
     finalized_at   TIMESTAMPTZ,                 -- when FUNDED/FAILED was decided
 
     cover_key      TEXT,
-    pitch_asset_id TEXT,                        -- Mongo media_assets._id, deliberately not an FK
+    pitch_asset_id TEXT,                        -- points into object storage / the media asset row, deliberately not an FK
     review_note    TEXT,
 
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -174,9 +174,9 @@ CREATE INDEX idx_campaigns_creator     ON campaigns (creator_id, created_at DESC
 CREATE INDEX idx_campaigns_category    ON campaigns (category, status);
 ```
 
-Note `pitch_asset_id TEXT` with no foreign key: it points into **Mongo**. Cross-store
-references are plain identifiers and the application enforces them. Naming it
-`_id`-shaped and documenting it here is the substitute for referential integrity.
+Note `pitch_asset_id TEXT` with no foreign key: it points at a media asset whose
+metadata lives in a `JSONB` column on the same database (see the media tables).
+The app enforces the linkage; there is no second store to keep in sync.
 
 The partial index `WHERE status = 'LIVE'` is deliberate — the deadline sweep runs
 every 60 seconds forever, and it should touch an index containing only live
@@ -445,7 +445,7 @@ after the first entry, when the transaction is legitimately unbalanced.
 CREATE TABLE entitlements (
     id          UUID PRIMARY KEY,
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    film_id     TEXT NOT NULL,                  -- Mongo films._id
+    film_id     TEXT NOT NULL,                  -- = campaign_id; films are 1:1 with campaigns
     kind        TEXT NOT NULL CHECK (kind IN ('EARLY_ACCESS','DOWNLOAD','CREDIT','BTS')),
     source_pledge_id UUID REFERENCES pledges(id),
     granted_at  TIMESTAMPTZ NOT NULL DEFAULT now(),

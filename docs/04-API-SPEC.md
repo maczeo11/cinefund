@@ -92,7 +92,7 @@ also carry `X-CSRF-Token`** matching a non-httpOnly `cf_csrf` cookie
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
 | GET | `/health/live` | none | process is up. Never touches a dependency. |
-| GET | `/health/ready` | none | pings Postgres, Mongo, Redis with a 2s budget. 503 if any fails. |
+| GET | `/health/ready` | none | pings Postgres and Redis with a 2s budget. 503 if either fails. |
 | GET | `/metrics` | internal only | Prometheus exposition |
 
 Separating live from ready matters: a liveness probe that checks the database
@@ -163,7 +163,7 @@ Current user + creator status + counts. 401 if unauthenticated.
 
 ### `GET /api/v1/campaigns`
 
-Public listing, served from **Mongo**.
+Public listing, served from the **Postgres catalog projection**.
 
 | Param | Type | Default | Notes |
 | --- | --- | --- | --- |
@@ -190,7 +190,8 @@ four hours ago is not "ending soon", and forgetting this is a classic.
 
 ### `GET /api/v1/campaigns/{slug}`
 
-The hybrid read: static content from Mongo, **funding numbers from Postgres**.
+The campaign page: static content and **funding numbers** from the same
+Postgres store — no cross-store read to reconcile.
 
 ```jsonc
 // 200
@@ -385,8 +386,9 @@ For files > 100 MB, respond with a multipart plan instead — see
 ### `POST /api/v1/media/uploads/{asset_id}/complete`
 
 Server `HEAD`s the object, verifies it exists and its size matches within
-tolerance, then flips status to `UPLOADED` — which is what the change stream
-sees. 409 if the object is missing.
+tolerance, then flips status to `UPLOADED` — the transition that emits the
+`media.uploaded` outbox event which starts the transcode job. 409 if the
+object is missing.
 
 ### `GET /api/v1/media/assets/{id}`
 
@@ -411,11 +413,11 @@ later campaign. Object cleanup happens via a lifecycle rule, not synchronously.
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| GET | `/films` | public | catalog, Mongo, same pagination/sort conventions |
+| GET | `/films` | public | catalog projection, same pagination/sort conventions |
 | GET | `/films/{slug}` | public | metadata + `viewer.can_watch` + `viewer.reason` |
 | GET | `/films/{id}/playback` | conditional | **the authorisation endpoint** |
 | GET | `/films/{id}/download` | entitled | presigned GET of the top rendition, TTL 1h, rate-limited to 3/day |
-| POST | `/films/{id}/progress` | user | `{position_seconds}`; fire-and-forget, batched to Mongo |
+| POST | `/films/{id}/progress` | user | `{position_seconds}`; fire-and-forget, batched to Postgres |
 
 ### `GET /api/v1/films/{id}/playback`
 
@@ -435,7 +437,7 @@ later campaign. Object cleanup happens via a lifecycle rule, not synchronously.
                           "public_from": "2026-11-15T00:00:00Z" } } }
 ```
 
-Never cached. Never served from the Mongo projection. The entitlement check hits
+Never cached. Never served from a projection. The entitlement check hits
 Postgres every time — see [01 §5.4](01-ARCHITECTURE.md#54-playback-authorisation).
 
 ---

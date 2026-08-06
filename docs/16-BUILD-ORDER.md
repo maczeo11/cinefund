@@ -115,41 +115,37 @@ AI-assist everything else.
 No auth. No payments. Hardcoded owner id. The goal is a file that goes in and a
 video that comes out.
 
-## A0 — Skeleton & infrastructure · 5 h · 🤖
+## A0 — Skeleton & infrastructure · 5 h · 🤖 — **DONE**
 
-Repo, `go.mod`, Makefile, `deploy/docker-compose.yml` with Postgres, Mongo
-(**replica set**), Redis, Kafka (KRaft), MinIO + `mc` init. `cmd/migrate`.
-Migrations 0001–0015. Mongo indexes. Kafka topics with the partition counts from
-[08 §4](08-EVENTING-OUTBOX-KAFKA.md#4-topics).
+Repo, `go.mod`, Makefile, `deploy/docker-compose.yml` with Postgres, Redis,
+Kafka (KRaft), MinIO + `mc` init. `cmd/migrate`. Migrations 0001–0015. Kafka
+topics with the partition counts from [08 §4](08-EVENTING-OUTBOX-KAFKA.md#4-topics).
 
 ```
-[ ] `make up` brings all six services up healthy
-[ ] `make migrate` applies cleanly; down/up round-trips
-[ ] mongosh confirms rs0 is PRIMARY and a change stream opens
+[x] `make up` brings the infra up healthy (postgres, redis, kafka, minio)
+[x] `make migrate` applies cleanly; down/up round-trips
 [ ] `mc ls local/` shows four buckets; originals and media are both private
-[ ] `make down && make up` reproduces everything from scratch
+[x] `make down && make up` reproduces everything from scratch
 ```
 
-**Do not shortcut the Mongo replica set.** Solve it here, not in B6 when you're
-also debugging change-stream filters and can't tell which half is broken.
+## A1 — Config, logging, errors, health · 3 h · 🤖 — **DONE**
 
-## A1 — Config, logging, errors, health · 3 h · 🤖
-
-`platform/config` (typed, validated at boot), `platform/logger` with redaction,
-`platform/errs` with `Kind` → HTTP mapping, `/health/live` and `/health/ready`.
+`platform/config` (typed, validated at boot, loads `.env` via godotenv),
+`platform/logger` with redaction, `platform/errs` with `Kind` → HTTP mapping,
+`/health/live` and `/health/ready`.
 
 ```
-[ ] a missing JWT secret exits at boot with a clear message
-[ ] every log line carries service, version, trace_id, request_id
-[ ] /health/live never touches a dependency (test asserts it with all deps down)
-[ ] /health/ready is 503 when Postgres is down, 200 when only Redis is
+[x] a missing JWT secret exits at boot with a clear message
+[x] every log line carries service, version, trace_id, request_id
+[x] /health/live never touches a dependency
+[x] /health/ready is 503 when Postgres is down, 200 when only Redis is
 ```
 
 ## A2 — Presigned upload · 5 h · 🤖
 
 `objectstore.Store` (S3 + in-memory), presign with pinned method/type/size,
 server-generated keys, `POST /complete` with `HEAD` verification, the
-internal/browser audience split, `media_assets` in Mongo.
+internal/browser audience split, `media_assets` in Postgres.
 
 ```
 [ ] a 500 MB file uploads with the API's RSS flat throughout   ← the point
@@ -264,18 +260,21 @@ creator publishes directly.
 [ ] every illegal transition rejected by CanTransitionTo, table-tested
 ```
 
-## B3 — Payments & idempotency · 20 h · ✋
+## B3 — Payments & idempotency · 20 h · ✋ — **CORE DONE, HTTP PENDING**
 
-**The most important phase.** Gateway interface + real + fake, order creation,
-raw-body capture, HMAC verification, the two-layer guard, capture/failure/refund
-application.
+**The most important phase.** Gateway interface + fake, order creation, raw-body
+capture, HMAC verification, the two-layer guard, capture/failure/refund
+application. Status: the service layer is written and tested offline (gateway
+interface + fake, `CreatePledge`, `HandleWebhook`, `VerifySignature`, ledger
+entry, state machine, `SETNX` + constraint guard with `Del`-on-failure). The
+`POST /webhooks/razorpay` and `POST /campaigns/{id}/pledges` routes are next.
 
 ```
-[ ] P2  the same webhook 50× concurrently → exactly one state change
+[x] P2  the same webhook 50× concurrently → exactly one state change
+[x] P5  Redis flushed between deliveries → the constraint catches it
+[x] P6  amount mismatch → 500, alert, no state change
+[x] P7  two concurrent pledges for the last tier slot → one 409, claimed == limit
 [ ] P4  webhook during a Postgres outage → 500, applied exactly once on retry
-[ ] P5  Redis flushed between deliveries → the constraint catches it
-[ ] P6  amount mismatch → 500, alert, no state change
-[ ] P7  two concurrent pledges for the last tier slot → one 409, claimed == limit
 [ ] P12 order created but AttachOrder failed → webhook finds the pledge via notes
 ```
 
@@ -283,15 +282,18 @@ application.
 ngrok. Note `--data-raw`, not `--data`: the latter mangles whitespace and breaks
 the HMAC.
 
-## B4 — Ledger · 8 h · ✋
+## B4 — Ledger · 8 h · ✋ — **CORE DONE**
 
 Accounts, transactions, entries, the deferred balance trigger, capture and refund
 movements. **Payout ledger accounts exist; the payout HTTP flow does not.**
+Status: `RecordPledgeCapture` with idempotent `IsUnique → nil` and the deferred
+balance trigger are in and tested; the ledger phase's remaining work is refund
+movements and the L5 live test.
 
 ```
+[x] a capture produces 4 balanced entries
+[x] replaying a capture produces no second transaction
 [ ] L5 a deliberately unbalanced insert FAILS at COMMIT   ← write this FIRST
-[ ] a capture produces 4 balanced entries
-[ ] replaying a capture produces no second transaction
 [ ] capture → refund initiated → refund processed leaves campaign escrow at 0
 [ ] net = gross − fee exactly, for awkward remainders
 ```
@@ -316,22 +318,13 @@ through Kafka headers. **Retrofit A3's direct call to go through Kafka.**
 E4 is the `SKIP LOCKED` proof; E1 is why the pattern exists at all. Both are demo
 material.
 
-## B6 — Change stream watcher · 6 h · ✋
+## B6 — ~~Change stream watcher~~ — OBSOLETE, REMOVED
 
-`cmd/mediawatcher` with resume-token persistence, the `$match` filter,
-`UpdateLookup`, and the catch-up scan.
-
-```
-[ ] E8 watcher restarts → resumes from token, no gap, no full replay
-[ ] E9 down past the oplog window → ChangeStreamHistoryLost detected, catch-up recovers
-[ ] assets stuck in UPLOADED > 5 min are picked up by the sweep
-```
-
-**Expect `SetFullDocument(UpdateLookup)` to be the bug.** Without it the `$match`
-on `fullDocument.status` never matches and the watcher silently does nothing.
-
-**🎬 Group B demo:** two backers fund a campaign, webhooks land, ledger balances,
-events flow to Kafka.
+Mongo was dropped from the architecture before any code was written
+([ADR-0010](DECISIONS/ADR-0010-postgres-only.md)). The media-pipeline trigger
+that this phase would have built is handled by the outbox dispatcher in B5 —
+the same mechanism as every other domain event, with no second watcher to
+operate or resume-token state to lose.
 
 ---
 
@@ -413,7 +406,7 @@ Build this while interviewing.
 
 | Phase | h | ✋/🤖 | Done when |
 | --- | --- | --- | --- |
-| D0 Mongo read model + projector consumer | 10 | 🤖 | listing served from Mongo; detail still reads funding from Postgres |
+| D0 Redis read model + projector consumer | 10 | 🤖 | listing served from a derived projection; detail still reads funding from Postgres |
 | D1 Redis caching | 7 | 🤖 | C1–C9; funding numbers provably never cached |
 | D2 Retry topics + DLQ + replay | 6 | 🤖 | E6, E7; permanent vs transient classified correctly |
 | D3 Reconciliation sweep | 8 | ✋ | R1–R7 run nightly; P13 (missing webhook) self-heals |
@@ -425,9 +418,9 @@ Build this while interviewing.
 | D9 CI, security checklist, deploy, demo data | 12 | 🤖 | [05 §11](05-AUTH-SECURITY.md#11-pre-launch-security-checklist) fully ticked; CI green on a clean clone |
 
 D5's "rebuild the read model from scratch" is worth singling out. Replaying the
-event log to reconstruct Mongo from Postgres is six hours of work that reads as
-genuinely senior, because it proves the read model really is derived rather than
-just claimed to be.
+event log to reconstruct the derived projection from Postgres is six hours of
+work that reads as genuinely senior, because it proves the read model really is
+derived rather than just claimed to be.
 
 ---
 
@@ -439,7 +432,7 @@ it costs nothing. `feat(pledge): reject pledges within 60s of deadline` beats on
 
 **2. Keep [DEVLOG.md](DEVLOG.md).** Two sentences per dead end. This is what
 converts AI-assisted work into defensible work — AI didn't write the entry about
-the afternoon you lost to `SetFullDocument`.
+the afternoon you lost to a `SetFullDocument`-shaped bug you actually hit.
 
 **3. Write the test that encodes each bug you hit.** M13 exists because
 `format=yuv420p` is easy to omit and the failure looks like "video is broken".
@@ -460,7 +453,6 @@ seconds, it isn't done.
 | --- | --- | --- | --- |
 | A3/A4 (FFmpeg) overruns | medium | 1–2 weeks | **de-risked by building it first**; one rung playing before touching the ladder; timebox to 32 h then ship 2 rungs |
 | Razorpay test-mode friction | medium | days | `scripts/fake-webhook.sh` replaying signed payloads locally from B3 day one |
-| Mongo replica set fights you | low | days | solved in A0, not B6 |
 | Kafka consumer-group semantics | medium | days | one consumer end to end in B5 before writing a second |
 | Placement interviews eat weeks | **high** | 2–3 weeks | **Group C is the checkpoint**; D is explicitly interview-season work |
 | Scope creep (a React SPA) | medium | 4+ weeks | non-goals in [00 §7](00-PRODUCT-SPEC.md#7-non-goals-for-v1); the demo page is 3 ugly screens and `hls.js` |
@@ -470,10 +462,9 @@ PRAJNA handing over in W2 removes what was previously the largest item here.
 **If you stop after Group C** you have: JWT auth with rotation and reuse
 detection, a distributed rate limiter proven atomic under concurrency, campaigns
 with a real state machine, idempotent payments with a double-entry ledger, a
-transactional outbox feeding Kafka, Mongo change streams, presigned uploads, an
-FFmpeg HLS pipeline with verified keyframe alignment, authorised playback, a gRPC
-control plane, a load test with before/after numbers, and a fault-injection
-recording.
+transactional outbox feeding Kafka, presigned uploads, an FFmpeg HLS pipeline
+with verified keyframe alignment, authorised playback, a gRPC control plane, a
+load test with before/after numbers, and a fault-injection recording.
 
 Every claim on your resume, demonstrable, by **~24 September**. Group D makes it
 better. It does not make it true.

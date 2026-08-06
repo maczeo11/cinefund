@@ -3,6 +3,13 @@
 How the pieces fit, where the boundaries are, and what happens when each one
 breaks.
 
+> **Status note (2026-08-06).** This document was written for a two-store design
+> (Postgres for money, Mongo for the catalog). MongoDB was dropped before any
+> code was written — [ADR-0010](DECISIONS/ADR-0010-postgres-only.md). Treat every
+> "Mongo" below as "a Postgres `JSONB` projection"; the component shapes, the
+> layering, the failure-mode table and the outbox spine all still hold. The
+> change-stream / mediawatcher material is obsolete and kept only as history.
+
 ---
 
 ## 1. Shape: modular monolith + purpose-built workers

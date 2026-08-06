@@ -1,5 +1,15 @@
 # 03 — Mongo Data Model
 
+> **Obsolete as of 2026-08-06.** MongoDB was removed from the architecture before
+> any code was written — see [ADR-0010](DECISIONS/ADR-0010-postgres-only.md) and
+> [ADR-0001](DECISIONS/ADR-0001-polyglot-persistence.md). Everything in this
+> document's remit — the catalog, media assets, transcode jobs — lives in
+> Postgres `JSONB` columns, and the outbox replaces change streams as the event
+> mechanism. This file is kept as a historical record only.
+>
+> Re-numbering note: the document tree was written when 03 was Mongo. The gap
+> (00, 01, 02, 04…) is deliberate; IDs stay stable so links don't rot.
+
 Mongo owns read-heavy, shape-shifting data: the public catalog, media assets and
 their renditions, transcode jobs, and user-generated content. None of it is
 authoritative for money.

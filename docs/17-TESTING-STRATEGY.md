@@ -2,6 +2,11 @@
 
 What to test, at which level, and — just as important — what not to test.
 
+> **Status note (2026-08-06).** MongoDB was dropped
+> ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md)); the integration stack is
+> now Postgres + Redis + Kafka. The unit-vs-integration split and the
+> "write the test that encodes the bug" discipline are unchanged.
+
 ---
 
 ## 1. The shape

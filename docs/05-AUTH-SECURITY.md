@@ -282,9 +282,7 @@ if !ok { return errs.Invalid("unknown sort") }
 
 - Body size limit: `http.MaxBytesReader` at 1 MiB globally, 64 KiB on auth
   routes. Without it, a 2 GB JSON body is a memory DoS.
-- All SQL through `pgx` parameters. All Mongo through typed filters, never a
-  `bson.M` built from user input keys — `{$where: ...}` and operator injection
-  are real.
+- All SQL through `pgx` parameters. No dynamic SQL built from user input.
 
 ```go
 // dangerous: user controls the key
@@ -321,7 +319,7 @@ header) turns every site on the internet into a trusted origin.
 | --- | --- | --- |
 | `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | env | rotate by supporting two keys with a `kid` header for one release |
 | `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | env | via the Razorpay dashboard; support two webhook secrets during the overlap |
-| `POSTGRES_URL`, `MONGO_URI`, `REDIS_URL` | env | — |
+| `POSTGRES_DSN`, `REDIS_ADDR` | env | — |
 | `S3_ACCESS_KEY`, `S3_SECRET_KEY` | env | scoped to one bucket, PutObject/GetObject/HeadObject only |
 
 `.env` is gitignored. `.env.example` has every key with empty values, and CI

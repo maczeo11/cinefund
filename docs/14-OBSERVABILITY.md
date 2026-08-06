@@ -4,6 +4,10 @@ Three signals, one correlation id. The goal is that a single question —
 "what happened to pledge X?" — can be answered from the outside, without
 attaching a debugger.
 
+> **Status note (2026-08-06).** Mongo is no longer in the stack
+> ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md)); references to it in
+> dependency health/readiness tables below are historical.
+
 ---
 
 ## 1. Correlation

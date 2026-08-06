@@ -2,6 +2,11 @@
 
 Two producers, one bus, many consumers. This is the spine of the system.
 
+> **Status note (2026-08-06).** The change-stream mechanism described here was
+> dropped with MongoDB — [ADR-0010](DECISIONS/ADR-0010-postgres-only.md). There
+> is now **one** event mechanism (the Postgres outbox → Kafka), used for the
+> media pipeline too. §6 (the watcher) is obsolete and kept as history only.
+
 ---
 
 ## 1. The dual-write problem, stated precisely

@@ -2,6 +2,10 @@
 
 Kafka dispatches work. gRPC controls it.
 
+> **Status note (2026-08-06).** Progress is written to Postgres, not Mongo (the
+> two-store split was reversed — [ADR-0010](DECISIONS/ADR-0010-postgres-only.md)).
+> The control-plane contracts and failure tolerances are unchanged.
+
 ---
 
 ## 1. Why both

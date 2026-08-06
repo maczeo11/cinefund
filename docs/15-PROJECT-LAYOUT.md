@@ -3,6 +3,14 @@
 The exact file tree, and what every package owns. Read this before creating a
 file — "where does this go" should never be a decision you make twice.
 
+> **Status note (2026-08-06).** The tree below still shows the obsolete
+> Mongo-era layout — `cmd/mediawatcher`, `internal/catalog` with its Mongo
+> projections, `internal/mongodb`. MongoDB was dropped before any code was
+> written ([ADR-0010](DECISIONS/ADR-0010-postgres-only.md)); the real tree is
+> the one in the repository, which reflects the single-store design. The
+> `internal/<domain>` package convention described here is what the code
+> follows.
+
 ---
 
 ## 1. The tree

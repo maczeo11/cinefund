@@ -3,6 +3,11 @@
 **Status:** accepted
 **Date:** 2026-08-02
 
+> **Status note (2026-08-06).** The "change-stream watcher" in the context below
+> no longer exists — MongoDB was dropped ([ADR-0010](ADR-0010-postgres-only.md))
+> and the outbox is the sole producer. The choice of Kafka and franz-go is
+> unaffected.
+
 ## Context
 
 The outbox and the change-stream watcher need somewhere to publish. Consumers

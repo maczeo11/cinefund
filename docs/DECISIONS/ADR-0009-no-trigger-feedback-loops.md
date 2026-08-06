@@ -1,8 +1,14 @@
 # ADR-0009: No component is triggered by a store it writes to
 
-**Status:** accepted
+**Status:** accepted — the *principle* stands; the change-stream mechanism described here is obsolete
 **Date:** 2026-08-02
 **Found:** during design review, before any code was written
+
+> **Status note (2026-08-06).** The media pipeline's trigger here — a Mongo
+> change stream on `media_assets` — was removed with MongoDB
+> ([ADR-0010](ADR-0010-postgres-only.md)). The rule this ADR argues for still
+> holds and is now satisfied trivially: every component publishes to the outbox
+> and is triggered by Kafka, never by a store it wrote to.
 
 ## Context
 
