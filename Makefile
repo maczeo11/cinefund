@@ -52,8 +52,5 @@ test-int:       ## integration tests, needs docker
 lint:           ## golangci-lint
 	golangci-lint run
 
-sample:         ## generate the test fixture video
-	@mkdir -p testdata
-	ffmpeg -f lavfi -i testsrc=duration=10:size=1920x1080:rate=24 \
-	       -f lavfi -i sine=frequency=440:duration=10 \
-	       -c:v libx264 -c:a aac -shortest testdata/sample_1080p.mp4
+sample:         ## run a real ABR transcode on the sample video
+	bash scripts/test-transcode.sh
