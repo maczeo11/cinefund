@@ -15,39 +15,27 @@ import (
 	"github.com/maczeo11/cinefund/internal/pledge/gateway"
 )
 
-// ErrDuplicateEvent is returned when a webhook has already been processed. The
-// HTTP layer maps it to 200 so the provider stops retrying.
 var ErrDuplicateEvent = errors.New("duplicate event")
 
-// Redis is the fast-path store for webhook idempotency and the fake it runs
-// against in tests.
 type Redis interface {
 	SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error)
 	Del(ctx context.Context, keys ...string) (int64, error)
 }
 
-// Repository is the set of writes that happen OUTSIDE a transaction (a repo
-// method that opens its own transaction is a bug - it would break the
-// transaction boundary that lives in the service). Inside a transaction the
-// service uses Queries, which is the same underlying store bound to the tx.
 type Repository interface {
 	AttachOrder(ctx context.Context, pledgeID uuid.UUID, orderID string) error
 }
 
-// TxRunner runs a function inside a transaction, handing it the tx-bound
-// Queries so every write in the function shares one transaction.
 type TxRunner interface {
 	Do(ctx context.Context, fn func(q Queries) error) error
 }
-
-// Service orchestrates the pledge lifecycle.
 type Service struct {
-	repo         Repository
-	tx           TxRunner
-	ledger       *Ledger
-	gw           gateway.Gateway
-	redis        Redis
-	log          *slog.Logger
+	repo          Repository
+	tx            TxRunner
+	ledger        *Ledger
+	gw            gateway.Gateway
+	redis         Redis
+	log           *slog.Logger
 	webhookSecret string
 }
 
@@ -63,9 +51,9 @@ func NewService(
 	return &Service{repo: repo, tx: tx, ledger: ledger, gw: gw, redis: redis, webhookSecret: webhookSecret, log: log}
 }
 
-// ---------------------------------------------------------------------------
+
 // CreatePledge
-// ---------------------------------------------------------------------------
+
 
 type CreateInput struct {
 	CampaignID uuid.UUID
@@ -76,10 +64,9 @@ type CreateInput struct {
 	Message    string
 }
 
-// CreatePledge validates the request, inserts the pledge, then creates the
-// provider order OUTSIDE the transaction (docs/06 §2). A pledge with no order
-// id is cleaned up by the reconciliation sweep; it is never deleted, because a
-// deleted row is a lost audit trail and the order might exist anyway.
+// CreatePledge inserts the pledge then creates the provider order outside
+// the transaction. If the order call fails, the pledge row stays for
+// the reconciliation sweep to clean up later.
 func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, error) {
 	var pledge *Pledge
 	err := s.tx.Do(ctx, func(q Queries) error {
@@ -143,8 +130,8 @@ func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, er
 		return nil, errs.Unavailable("PAYMENT_PROVIDER_UNAVAILABLE", "could not create payment order")
 	}
 
-	// Order created at the provider but we failed to record it locally. The
-	// webhook's receipt/notes still carry our pledge id, so it can recover.
+	// failed to save locally but the order exists at Razorpay — the webhook
+	// notes carry our pledge id so it'll still link up
 	if err := s.repo.AttachOrder(ctx, pledge.ID, order.ID); err != nil {
 		s.log.Error("order created but not attached", "pledge_id", pledge.ID, "order_id", order.ID, "error", err)
 	}
@@ -152,18 +139,16 @@ func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, er
 	return pledge, nil
 }
 
-// VerifySignature checks the HMAC over the raw body. Called by the HTTP layer
-// before anything else happens.
+// VerifySignature checks the HMAC-SHA256 over the raw body.
 func (s *Service) VerifySignature(raw []byte, signature string) error {
 	return crypto.VerifyRazorpaySignature(raw, signature, s.webhookSecret)
 }
 
-// ---------------------------------------------------------------------------
-// Webhook
-// ---------------------------------------------------------------------------
 
-// RazorpayWebhookEvent is the parsed envelope of an incoming webhook. Only the
-// fields the handler needs are typed; the rest stays in the raw JSONB payload.
+// Webhook
+
+
+// RazorpayWebhookEvent is the subset of fields we care about from a webhook.
 type RazorpayWebhookEvent struct {
 	ID      string `json:"id"`
 	Event   string `json:"event"`
@@ -184,9 +169,8 @@ type RazorpayWebhookEvent struct {
 	} `json:"payload"`
 }
 
-// HandleWebhook processes one verified webhook. It is idempotent in two layers
-// (docs/06 §3): Redis SETNX as a cheap fast path, and the payment_events unique
-// constraint as the durable guarantee.
+// HandleWebhook processes one verified webhook. Two-layer idempotency:
+// Redis SETNX (fast, lossy) + payment_events unique constraint (durable).
 func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 	var evt RazorpayWebhookEvent
 	if err := json.Unmarshal(raw, &evt); err != nil {
@@ -196,9 +180,7 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 		return errs.Invalid("MALFORMED_EVENT", "event has no id")
 	}
 
-	// Layer 1: Redis fast path. Optional. Absorbs a retry storm without touching
-	// Postgres. NOT a correctness guarantee - Redis can evict, fail over, or be
-	// flushed, which is exactly what Layer 2 exists for.
+	// fast path — absorbs retry storms without touching postgres
 	lockKey := "idem:wh:" + evt.ID
 	acquired, err := s.redis.SetNX(ctx, lockKey, "1", 24*time.Hour)
 	if err != nil {
@@ -231,9 +213,7 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 		}
 	})
 
-	// The subtle line. If we failed for any reason other than duplicate, release
-	// the Redis key so the provider's retry is not swallowed by our own fast
-	// path - otherwise the event is lost forever. (docs/06 §3)
+	// release the redis key on failure so the provider's retry isn't swallowed
 	if err != nil && !errors.Is(err, ErrDuplicateEvent) {
 		if _, delErr := s.redis.Del(ctx, lockKey); delErr != nil {
 			s.log.Warn("failed to release webhook lock", "event_id", evt.ID, "error", delErr)
@@ -251,8 +231,7 @@ func (s *Service) applyCapture(ctx context.Context, q Queries, evt RazorpayWebho
 	pledge, err := q.GetPledgeByOrderID(ctx, p.OrderID)
 	if err != nil {
 		if postgres.IsNoRows(err) {
-			// Fallback: the order may never have been attached (P12). Recover
-			// via the notes we put on the order at creation time.
+			// order wasn't attached — fall back to notes
 			if pid := p.Notes.PledgeID; pid != "" {
 				id, perr := uuid.Parse(pid)
 				if perr != nil {
@@ -284,7 +263,7 @@ func (s *Service) applyCapture(ctx context.Context, q Queries, evt RazorpayWebho
 	}
 	if pledge.TierID != nil {
 		if err := q.IncrementTierClaimed(ctx, *pledge.TierID); err != nil {
-			return err // chk_tier_not_oversold guards here
+			return err
 		}
 	}
 	if err := s.ledger.RecordPledgeCapture(ctx, q, pledge, p.Fee+p.Tax); err != nil {

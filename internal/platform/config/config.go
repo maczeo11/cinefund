@@ -1,7 +1,4 @@
-// Package config parses the environment into one typed struct, once, at boot.
-//
-// The rule the rest of the codebase depends on: there is no os.Getenv below
-// this package. If something needs a value, it takes it as a parameter.
+// Package config parses environment into a typed struct at boot.
 package config
 
 import (
@@ -43,16 +40,12 @@ type Kafka struct {
 
 type S3 struct {
 	Endpoint string `env:"S3_ENDPOINT" envDefault:"http://localhost:9000"`
-	// PublicEndpoint is what presigned URLs handed to a browser must be signed
-	// against. It differs from Endpoint whenever the API talks to storage over
-	// an internal hostname the browser cannot resolve. See docs/10 §6 - this is
-	// the trap that costs everyone an hour.
-	PublicEndpoint   string `env:"S3_PUBLIC_ENDPOINT" envDefault:"http://localhost:9000"`
-	AccessKey        string `env:"S3_ACCESS_KEY,required"`
-	SecretKey        string `env:"S3_SECRET_KEY,required"`
-	Region           string `env:"S3_REGION" envDefault:"us-east-1"`
-	BucketOriginals  string `env:"S3_BUCKET_ORIGINALS" envDefault:"cinefund-originals"`
-	BucketMedia      string `env:"S3_BUCKET_MEDIA"     envDefault:"cinefund-media"`
+	PublicEndpoint  string `env:"S3_PUBLIC_ENDPOINT" envDefault:"http://localhost:9000"`
+	AccessKey       string `env:"S3_ACCESS_KEY,required"`
+	SecretKey       string `env:"S3_SECRET_KEY,required"`
+	Region          string `env:"S3_REGION" envDefault:"us-east-1"`
+	BucketOriginals string `env:"S3_BUCKET_ORIGINALS" envDefault:"cinefund-originals"`
+	BucketMedia     string `env:"S3_BUCKET_MEDIA"     envDefault:"cinefund-media"`
 }
 
 type JWT struct {
@@ -75,14 +68,12 @@ type Transcode struct {
 
 func (c Config) IsProduction() bool { return c.Env == "production" }
 
-// UseFakeGateway reports whether the payment gateway should be the deterministic
-// test double. Empty Razorpay credentials outside production means "no network",
-// which is what makes the whole payment suite runnable on a laptop.
+// UseFakeGateway returns true when no Razorpay creds are set (dev mode).
 func (c Config) UseFakeGateway() bool {
 	return !c.IsProduction() && c.Razorpay.KeyID == ""
 }
 
-// Validate enforces the rules that would otherwise fail at 3 a.m.
+// Validate checks that required config values make sense.
 func (c Config) Validate() error {
 	var errs []error
 
@@ -92,8 +83,7 @@ func (c Config) Validate() error {
 	if len(c.JWT.RefreshSecret) < 32 {
 		errs = append(errs, errors.New("JWT_REFRESH_SECRET must be at least 32 bytes"))
 	}
-	// Distinct secrets: if they are equal, an access token is a valid refresh
-	// token and the whole rotation scheme is decorative.
+	// if they match, an access token works as a refresh token
 	if c.JWT.AccessSecret == c.JWT.RefreshSecret {
 		errs = append(errs, errors.New("JWT access and refresh secrets must differ"))
 	}
@@ -111,13 +101,9 @@ func (c Config) Validate() error {
 	return errors.Join(errs...)
 }
 
-// MustLoad parses and validates, or exits. Failing at boot is the point.
-//
-// A local .env is loaded first if present (godotenv never overwrites a real
-// environment variable, so CI/docker env wins over the file). This is what makes
-// `cp .env.example .env && go run ./cmd/migrate up` work on a laptop.
+// MustLoad parses env and exits if invalid.
 func MustLoad() Config {
-	// Best-effort: no .env in production is fine because the env is set there.
+	// .env is optional — production sets env vars directly
 	_ = godotenv.Load()
 
 	var c Config

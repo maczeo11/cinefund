@@ -1,11 +1,3 @@
-// Package pledge owns pledges, payments, the ledger, refunds and payouts.
-//
-// They live in one package because they are one transactional unit: you cannot
-// capture a pledge without writing ledger entries, so splitting them across
-// packages would mean exporting a transaction handle between packages.
-//
-// model.go has no imports of pgx, gin or the gateway SDK. If you cannot unit
-// test the state machine with zero infrastructure, the layering has leaked.
 package pledge
 
 import (
@@ -14,8 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status is the pledge lifecycle. The name is exactly the value stored in
-// pledges.status, so a rename here is a migration and nothing less.
+// Status values match the pledges.status column exactly.
 type Status string
 
 const (
@@ -36,18 +27,13 @@ var terminal = map[Status]bool{
 	StatusRefundFailed: true,
 }
 
-// allowed holds the legal transitions. Forward-only; the table in docs/00 §5
-// is the authority, this map is the code that enforces it.
-//
-// CREATED -> CAPTURED is legal because Razorpay in auto-capture mode collapses
-// AUTHORIZED -> CAPTURED into a single payment.captured event (docs/00 §5.3).
-// AUTHORIZED is still modelled for the manual-capture path.
+// CREATED -> CAPTURED is legal because Razorpay auto-capture skips AUTHORIZED.
 var allowed = map[Status]map[Status]bool{
 	StatusCreated: {
-		StatusAuthorized:   true,
-		StatusCaptured:     true, // auto-capture: payment.captured arrives directly
-		StatusFailed:       true, // order creation failed / sweep timed out
-		StatusRefundPending: true, // backer cancelled before capture (rule F9)
+		StatusAuthorized:    true,
+		StatusCaptured:      true, // auto-capture: payment.captured arrives directly
+		StatusFailed:        true, // order creation failed / sweep timed out
+		StatusRefundPending: true, // backer cancelled before capture
 	},
 	StatusAuthorized: {
 		StatusCaptured: true,
@@ -58,12 +44,12 @@ var allowed = map[Status]map[Status]bool{
 		StatusSettled:       true, // payout paid
 	},
 	StatusRefundPending: {
-		StatusRefunded: true,
+		StatusRefunded:     true,
 		StatusRefundFailed: true,
 	},
 }
 
-// CanTransitionTo reports whether from can move to to in one step.
+// CanTransitionTo checks if this transition is legal.
 func (from Status) CanTransitionTo(to Status) bool {
 	if from == to {
 		return true
@@ -71,10 +57,10 @@ func (from Status) CanTransitionTo(to Status) bool {
 	return allowed[from][to]
 }
 
-// Terminal reports whether the pledge is in a state no future event changes.
+// Terminal returns true if no further transitions are possible.
 func (from Status) Terminal() bool { return terminal[from] }
 
-// Pledge is the domain aggregate.
+// Pledge is the main aggregate.
 type Pledge struct {
 	ID                uuid.UUID
 	CampaignID        uuid.UUID
@@ -92,7 +78,7 @@ type Pledge struct {
 	CreatedAt         time.Time
 }
 
-// Tier is the slice of the reward-tier row the pledge flow needs.
+// Tier — just the fields the pledge flow needs.
 type Tier struct {
 	ID            uuid.UUID
 	CampaignID    uuid.UUID
@@ -101,13 +87,12 @@ type Tier struct {
 	ClaimedCount  int
 }
 
-// SoldOut reports whether the tier can accept another pledge. Only meaningful
-// when QuantityLimit is set.
+// SoldOut returns true when the tier has hit its limit.
 func (t *Tier) SoldOut() bool {
 	return t.QuantityLimit != nil && t.ClaimedCount >= *t.QuantityLimit
 }
 
-// Campaign is the slice of the campaign row the pledge flow needs.
+// Campaign — just the fields the pledge flow reads.
 type Campaign struct {
 	ID        uuid.UUID
 	CreatorID uuid.UUID

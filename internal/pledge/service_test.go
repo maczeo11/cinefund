@@ -27,8 +27,6 @@ func liveCampaign(creator uuid.UUID, deadline time.Time) *Campaign {
 	return &Campaign{ID: uuid.New(), CreatorID: creator, Status: "LIVE", Deadline: deadline}
 }
 
-// --- state machine ---------------------------------------------------------
-
 func TestStatusCanTransitionTo(t *testing.T) {
 	cases := []struct {
 		name string
@@ -64,8 +62,6 @@ func TestTerminal(t *testing.T) {
 		t.Fatal("captured is not terminal")
 	}
 }
-
-// --- CreatePledge ----------------------------------------------------------
 
 func TestCreatePledge_RejectsWhenCampaignNotLive(t *testing.T) {
 	fq := newFakeQueries()
@@ -148,8 +144,6 @@ func TestCreatePledge_CreatesOrderAndAttaches(t *testing.T) {
 	}
 }
 
-// --- Webhook idempotency ---------------------------------------------------
-
 func captureBody(t *testing.T, gw *fake.Fake, orderID string, amount int64, secret string) ([]byte, string) {
 	t.Helper()
 	body, sig, err := gw.Capture(orderID, fake.PaymentEntity{
@@ -165,8 +159,7 @@ func captureBody(t *testing.T, gw *fake.Fake, orderID string, amount int64, secr
 	return body, sig
 }
 
-// P1: happy path - a captured pledge increments the campaign, writes ledger and
-// outbox, exactly once.
+// captured pledge should increment campaign, write ledger + outbox once
 func TestHandleWebhook_CaptureHappyPath(t *testing.T) {
 	fq := newFakeQueries()
 	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
@@ -200,7 +193,7 @@ func TestHandleWebhook_CaptureHappyPath(t *testing.T) {
 	}
 }
 
-// P2: the same webhook 50x concurrently -> exactly one state change.
+// 50 goroutines fire the same webhook, only one should win
 func TestHandleWebhook_SameEvent50xConcurrent(t *testing.T) {
 	fq := newFakeQueries()
 	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
@@ -254,8 +247,7 @@ func TestHandleWebhook_SameEvent50xConcurrent(t *testing.T) {
 	}
 }
 
-// P5: Redis flushed between two deliveries -> the Postgres constraint (the
-// fake's events map) still catches the duplicate.
+// if redis loses the key, postgres constraint still catches duplicates
 func TestHandleWebhook_RedisFlushedStillOnce(t *testing.T) {
 	fq := newFakeQueries()
 	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
@@ -288,9 +280,7 @@ func TestHandleWebhook_RedisFlushedStillOnce(t *testing.T) {
 	}
 }
 
-// P6: capture whose amount differs from the pledge amount -> error, no state
-// change. In the fake the service returns an error and the transaction rolls
-// back, so nothing is captured.
+// wrong amount should fail without changing anything
 func TestHandleWebhook_AmountMismatch(t *testing.T) {
 	fq := newFakeQueries()
 	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
@@ -316,8 +306,7 @@ func TestHandleWebhook_AmountMismatch(t *testing.T) {
 	}
 }
 
-// The failure path releases the Redis key, so a retry after a transient failure
-// is not swallowed by the fast path.
+// failed delivery should release redis key so retries arent swallowed
 func TestHandleWebhook_ReleasesLockOnFailure(t *testing.T) {
 	fq := newFakeQueries()
 	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
@@ -357,8 +346,6 @@ func eventID(t *testing.T, body []byte) string {
 	return evt.ID
 }
 
-// gateway.ErrOrderNotFound path: reconciliation polls an order that never had a
-// pledge - the gateway returns the sentinel, and the sweep can act on it.
 func TestFetchPaymentsUnknownOrder(t *testing.T) {
 	gw := fake.New()
 	if _, err := gw.FetchPayments(context.Background(), "order_missing"); !errors.Is(err, gateway.ErrOrderNotFound) {

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// M2: a 480p source yields exactly the rungs at or below 480p, none upscaled.
+// a 480p source yields exactly the rungs at or below 480p, none upscaled.
 func TestLadderFor_NeverUpscales(t *testing.T) {
 	cases := []struct {
 		srcHeight int
@@ -36,14 +36,14 @@ func TestLadderFor_NeverUpscales(t *testing.T) {
 	}
 }
 
-// M3/M4: the ladder decision must use DISPLAY dimensions. A 90-rotated
-// 1920x1080 clip displays as 1080x1920 portrait, so it must get a ladder built
-// from height 1920, not 1080.
+// the ladder decision must use DISPLAY dimensions. A 90-rotated 1920x1080 clip
+// displays as 1080x1920 portrait, so it must get a ladder built from height
+// 1920, not 1080.
 func TestDisplayDimensions_Rotation(t *testing.T) {
 	cases := []struct {
-		w, h, rot  int
-		wantW      int
-		wantH      int
+		w, h, rot int
+		wantW     int
+		wantH     int
 	}{
 		{1920, 1080, 0, 1920, 1080},
 		{1920, 1080, 180, 1920, 1080},
@@ -64,8 +64,8 @@ func TestDisplayDimensions_Rotation(t *testing.T) {
 	}
 }
 
-// The GOP invariant. If this fails, ABR switching glitches and M9 will catch it
-// much later and much more expensively.
+// The GOP invariant. If this fails, ABR switching glitches - and it shows up
+// as playback bugs that are hard to trace back to the encoder settings.
 func TestGOPAlignmentInvariant(t *testing.T) {
 	gopSeconds := float64(GOPFrames) / float64(FrameRate)
 	if gopSeconds != 2.0 {

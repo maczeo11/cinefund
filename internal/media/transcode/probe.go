@@ -9,8 +9,7 @@ import (
 	"strings"
 )
 
-// RejectReason is a stable, machine-readable rejection code. These are stored on
-// media_assets.reject_reason and surfaced to the uploader.
+// RejectReason is stored on media_assets.reject_reason.
 type RejectReason string
 
 const (
@@ -23,9 +22,7 @@ const (
 	ReasonTypeMismatch     RejectReason = "content_type_mismatch"
 )
 
-// RejectError carries a rejection reason. A rejected asset is a terminal,
-// non-retryable outcome: retrying a file with no video stream will never
-// succeed, so it must not go back on the queue.
+// RejectError is terminal — no point retrying a file with no video stream.
 type RejectError struct {
 	Reason RejectReason
 	Detail string
@@ -42,7 +39,7 @@ func reject(r RejectReason, format string, a ...any) *RejectError {
 	return &RejectError{Reason: r, Detail: fmt.Sprintf(format, a...)}
 }
 
-// Purpose mirrors media_assets.purpose and sets the duration ceiling.
+// Purpose sets the duration ceiling for validation.
 type Purpose string
 
 const (
@@ -59,17 +56,14 @@ const (
 	minHeight       = 360
 )
 
-// decodableVideo is the codec allow-list. Anything outside it is rejected before
-// a single FFmpeg process starts, because discovering an undecodable stream 40
-// minutes into an encode wastes the whole 40 minutes.
+// reject unsupported codecs before spending 40 min on an encode
 var decodableVideo = map[string]bool{
 	"h264": true, "hevc": true, "vp8": true, "vp9": true, "av1": true,
 	"mpeg4": true, "mpeg2video": true, "prores": true, "dnxhd": true,
 	"theora": true, "wmv3": true, "vc1": true,
 }
 
-// Probe is the parsed subset of ffprobe output the pipeline reasons about. The
-// raw JSON is kept alongside it and stored verbatim.
+// Probe is the parsed subset of ffprobe output we need.
 type Probe struct {
 	Raw json.RawMessage
 
@@ -89,14 +83,14 @@ type Probe struct {
 	AudioCodec string
 }
 
-// DisplayDimensions returns the dimensions after the rotation matrix is applied.
+// DisplayDimensions returns width/height after rotation.
 func (p Probe) DisplayDimensions() (int, int) {
 	return DisplayDimensions(p.Width, p.Height, p.Rotation)
 }
 
-// ---------------------------------------------------------------------------
+
 // ffprobe output shapes
-// ---------------------------------------------------------------------------
+
 
 type ffprobeOutput struct {
 	Streams []ffprobeStream `json:"streams"`
@@ -126,7 +120,6 @@ type ffprobeStream struct {
 	} `json:"side_data_list"`
 }
 
-// Prober runs ffprobe.
 type Prober struct{ Path string }
 
 func NewProber(path string) *Prober {
@@ -136,7 +129,7 @@ func NewProber(path string) *Prober {
 	return &Prober{Path: path}
 }
 
-// Run probes the input, which is normally a presigned GET URL.
+// Run probes the input (usually a presigned URL).
 func (p *Prober) Run(ctx context.Context, input string) (*Probe, error) {
 	cmd := exec.CommandContext(ctx, p.Path, ProbeArgs(input)...)
 	var stderr strings.Builder
@@ -149,8 +142,7 @@ func (p *Prober) Run(ctx context.Context, input string) (*Probe, error) {
 	return ParseProbe(out)
 }
 
-// ParseProbe turns raw ffprobe JSON into a Probe. Split out from Run so the
-// rejection rules are testable against fixture JSON with no ffprobe present.
+// ParseProbe turns raw ffprobe JSON into a Probe.
 func ParseProbe(raw []byte) (*Probe, error) {
 	var o ffprobeOutput
 	if err := json.Unmarshal(raw, &o); err != nil {
@@ -187,15 +179,10 @@ func ParseProbe(raw []byte) (*Probe, error) {
 	return pr, nil
 }
 
-// parseRotation reads the rotation from either the modern displaymatrix side
-// data or the legacy `rotate` tag, and normalises both to the SAME convention:
-// degrees clockwise that the stored frame must be turned to display upright.
-//
-// The two sources disagree by sign. A portrait phone clip carries either
-// `rotate: 90` as a tag or `rotation: -90` in the display matrix - the matrix
-// reports the transform it applies, which is the inverse. Negating side data is
-// what makes both paths produce 90 for the same physical video, which matters
-// because they both write to one media_assets.rotation column.
+// parseRotation normalises both the displaymatrix side data and the legacy
+// rotate tag to the same convention. The two disagree by sign — the matrix
+// reports -90 for the same clip the tag calls 90. Negating the side data
+// value is what makes them agree.
 func parseRotation(s ffprobeStream) int {
 	for _, sd := range s.SideData {
 		if sd.Rotation != nil {
@@ -223,7 +210,7 @@ func normaliseRotation(r int) int {
 	}
 }
 
-// parseFrameRate handles ffprobe's "24000/1001" rational form.
+// parseFrameRate handles "24000/1001" style rationals.
 func parseFrameRate(s string) float64 {
 	num, den, ok := strings.Cut(s, "/")
 	n, err := strconv.ParseFloat(num, 64)
@@ -240,17 +227,12 @@ func parseFrameRate(s string) float64 {
 	return n / d
 }
 
-// ---------------------------------------------------------------------------
-// Rejection rules
-// ---------------------------------------------------------------------------
 
-// Validate applies the rejection rules from docs/09 §2. It returns a
-// *RejectError for anything that must not be retried.
-//
-// declaredType is the Content-Type the client presigned for. Checking it against
-// what the file actually is is a real security control, not pedantry: a client
-// that presigned for video/mp4 and uploaded something else is either broken or
-// probing you.
+// Rejection rules
+
+
+// Validate checks the probe result against our rules and returns a RejectError
+// for anything that shouldn't be retried.
 func (p Probe) Validate(purpose Purpose, declaredType string) error {
 	if !p.HasVideo {
 		return reject(ReasonNoVideoStream, "container %q has no video stream", p.FormatName)
@@ -272,9 +254,7 @@ func (p Probe) Validate(purpose Purpose, declaredType string) error {
 		}
 	}
 
-	// Dimension checks use DISPLAY dimensions: a 1080x1920 portrait clip stored
-	// as 1920x1080 with rotation=90 is perfectly valid and must not be rejected
-	// for being "too narrow".
+	// use display dimensions — a rotated portrait is valid
 	w, h := p.DisplayDimensions()
 	if w < minWidth || h < minHeight {
 		return reject(ReasonResolutionTooLow, "%dx%d is below the %dx%d minimum",
@@ -292,17 +272,15 @@ func (p Probe) Validate(purpose Purpose, declaredType string) error {
 	return nil
 }
 
-// contentTypeFormats maps a declared Content-Type to the ffprobe format names
-// that legitimately satisfy it. ffprobe reports comma-separated lists like
-// "mov,mp4,m4a,3gp,3g2,mj2", so the check is membership, not equality.
+// ffprobe reports comma-separated format lists, so we check membership
 var contentTypeFormats = map[string][]string{
-	"video/mp4":       {"mp4", "mov", "m4a", "isom"},
-	"video/quicktime": {"mov", "mp4"},
+	"video/mp4":        {"mp4", "mov", "m4a", "isom"},
+	"video/quicktime":  {"mov", "mp4"},
 	"video/x-matroska": {"matroska", "webm"},
-	"video/webm":      {"webm", "matroska"},
-	"video/mpeg":      {"mpeg", "mpegts", "mpegvideo"},
-	"video/x-msvideo": {"avi"},
-	"video/avi":       {"avi"},
+	"video/webm":       {"webm", "matroska"},
+	"video/mpeg":       {"mpeg", "mpegts", "mpegvideo"},
+	"video/x-msvideo":  {"avi"},
+	"video/avi":        {"avi"},
 }
 
 func formatMatchesContentType(formatName, declaredType string) bool {

@@ -124,9 +124,9 @@ func TestRewriteVariantPlaylist_SignsSegments(t *testing.T) {
 	}
 }
 
-// M12: a crafted path in a playlist must not become a signed URL to an
-// arbitrary object. The playlist is a file we generated, but treating it as
-// untrusted input costs two lines.
+// a crafted path in a playlist must not become a signed URL to an arbitrary
+// object. The playlist is a file we generated, but treating it as untrusted
+// input costs two lines.
 func TestRewriteVariantPlaylist_RejectsTraversal(t *testing.T) {
 	for _, bad := range []string{
 		"../../../etc/passwd",

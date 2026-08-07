@@ -15,10 +15,9 @@ import (
 //	-sc_threshold 0       forbid EXTRA keyframes at scene changes
 //
 // Without -sc_threshold 0, FFmpeg inserts a keyframe wherever it detects a cut.
-// Those cuts land at the same source timestamps on every rung, so it *looks*
-// harmless - but the encoder's decision differs per rung with the bitrate, the
-// GOPs drift apart, and a player switching quality mid-stream lands mid-GOP and
-// glitches. Test M9 is what proves this, and it is the test nobody writes.
+// Those cuts land at the same source timestamps on every rung, but the encoder's
+// decision differs per rung with the bitrate, so the GOPs drift apart and a
+// player switching quality mid-stream lands mid-GOP and glitches.
 //
 // SegmentSeconds must be an integer multiple of GOPFrames/FrameRate (6 = 3 x 2s)
 // or segments do not start on keyframes and independent_segments is a lie.
@@ -72,9 +71,8 @@ func RenditionArgs(input string, r Rung, outDir string) []string {
 		// scale=-2 computes width from the target height, rounded to an EVEN
 		// number. -1 can produce an odd width, which H.264 with yuv420p rejects.
 		// force_original_aspect_ratio=decrease never distorts non-16:9 source.
-		// format=yuv420p converts 10-bit / 4:2:2 sources (ProRes) to 8-bit 4:2:0
-		// - omit it and the file plays in VLC but shows a black frame in Chrome,
-		// which reads as "the video is broken". Test M13.
+		// format=yuv420p converts 10-bit / 4:2:2 sources (ProRes) to 8-bit 4:2:0;
+		// omit it and the file plays in VLC but shows a black frame in Chrome.
 		"-vf", fmt.Sprintf("scale=-2:%d:force_original_aspect_ratio=decrease,format=yuv420p", r.Height),
 
 		"-g", strconv.Itoa(GOPFrames),
@@ -108,8 +106,7 @@ func RenditionArgs(input string, r Rung, outDir string) []string {
 //
 // -ss goes BEFORE -i deliberately. Before the input it seeks by keyframe without
 // decoding; after the input FFmpeg decodes from frame 0, which on a 40-minute
-// source takes minutes instead of milliseconds. This flag order is one of the
-// highest-leverage things to know about FFmpeg.
+// source takes minutes instead of milliseconds.
 //
 // 10% rather than frame 0 because the first frame of almost every video is black.
 func PosterArgs(input string, durationSecs float64, outPath string) []string {

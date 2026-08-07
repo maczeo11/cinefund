@@ -68,9 +68,9 @@ func LadderFor(sourceHeight int) []Rung {
 // DisplayDimensions applies the rotation matrix.
 //
 // Phone footage stores 1920x1080 with rotation=90 and displays as 1080x1920.
-// FFmpeg auto-rotates on decode so the OUTPUT is usually upright anyway, but the
-// LADDER decision reads the stored numbers - so without this swap a portrait
-// clip gets a landscape ladder and every rung is wrong. Tests M3 and M4.
+// FFmpeg auto-rotates on decode so the output is usually upright anyway, but
+// the ladder decision reads the stored numbers - so without this swap a
+// portrait clip gets a landscape ladder and every rung is wrong.
 func DisplayDimensions(width, height, rotation int) (int, int) {
 	if rotation == 90 || rotation == 270 {
 		return height, width
@@ -83,13 +83,6 @@ func DisplayDimensions(width, height, rotation int) (int, int) {
 // Every rung is encoded with `-profile:v main -level 4.0`, so every rung is
 // main@4.0 -> avc1.4d4028. Deriving it here rather than hardcoding a table means
 // it cannot drift from the encoder settings.
-//
-// NOTE: docs/09 §7 shows an example master listing four DIFFERENT codec strings
-// (avc1.640028 = High@4.0 for 1080p, avc1.42c01e = Baseline@3.0 for 360p). That
-// example contradicts the FFmpeg command in §4 of the same document, which pins
-// main@4.0 for every rung. Advertising High profile for a stream encoded as Main
-// is exactly the "works in Chrome, black screen on iPhone" bug §7 warns about,
-// so the encoder settings win.
 const (
 	profileMainHex = 0x4d // Main
 	levelHex       = 0x28 // 4.0

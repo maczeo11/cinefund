@@ -10,11 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// fakeQueries is an in-memory Queries for service tests. It deliberately
-// emulates the payment_events unique constraint (uq_provider_event) in memory,
-// because that constraint IS the idempotency guarantee - the test needs to see
-// the same behaviour, and the fake redis Flush() exists to prove Layer 1 alone
-// is insufficient.
+// in-memory version of Queries for unit tests.
+// mirrors the uq_provider_event constraint so idempotency logic is testable.
 type fakeQueries struct {
 	mu sync.Mutex
 
@@ -51,7 +48,7 @@ func (f *fakeQueries) seedPledge(p *Pledge) {
 	}
 }
 
-func (f *fakeQueries) OutboxLen() int          { f.mu.Lock(); defer f.mu.Unlock(); return len(f.outbox) }
+func (f *fakeQueries) OutboxLen() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.outbox) }
 func (f *fakeQueries) Raised(id uuid.UUID) int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -199,8 +196,6 @@ func (f *fakeQueries) InsertLedgerEntries(_ context.Context, entries []LedgerEnt
 	return nil
 }
 
-// GetOrCreateAccount returns a stable uuid derived from the kind, so ledger
-// entries against the same account accumulate in the fake's balance map.
 func (f *fakeQueries) GetOrCreateAccount(_ context.Context, kind AccountKind, _ *uuid.UUID) (uuid.UUID, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -211,10 +206,8 @@ func (f *fakeQueries) GetOrCreateAccount(_ context.Context, kind AccountKind, _ 
 	return id, nil
 }
 
-// accountKey makes balances aggregable per account for the fake's assertions.
 func accountKey(e LedgerEntry) string { return e.AccountID.String() }
 
-// AttachOrder implements Repository for the fake.
 func (f *fakeQueries) AttachOrder(_ context.Context, pledgeID uuid.UUID, orderID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -227,10 +220,7 @@ func (f *fakeQueries) AttachOrder(_ context.Context, pledgeID uuid.UUID, orderID
 	return nil
 }
 
-// Do implements TxRunner for the fake: it runs fn against the same in-memory
-// store. There is no real rollback semantics - the fake is atomic by
-// construction (single lock), which is enough for the concurrency tests to
-// exercise the service's logic.
+// no real rollback but good enough for unit tests
 func (f *fakeQueries) Do(_ context.Context, fn func(q Queries) error) error {
 	return fn(f)
 }

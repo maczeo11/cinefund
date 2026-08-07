@@ -10,8 +10,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/twmb/franz-go/pkg/kgo"
 
 	"github.com/maczeo11/cinefund/internal/media"
 	"github.com/maczeo11/cinefund/internal/media/transcode"
@@ -48,21 +51,43 @@ func main() {
 		os.Exit(1)
 	}
 
+	jobRepo := media.NewJobRepo(pg)
 	worker := transcode.NewWorker(
 		transcode.Config{
 			Concurrency: cfg.Transcode.Concurrency,
 			WorkDir:     cfg.Transcode.TmpDir,
 		},
-		media.NewJobRepo(pg),
+		jobRepo,
 		store,
 		transcode.NewRunner(os.Getenv("FFMPEG_PATH")),
 		transcode.NewProber(os.Getenv("FFPROBE_PATH")),
 		log,
 	)
 
+	// The Kafka consumer turns media.uploaded events into jobs, which the
+	// worker then claims from Postgres. If Kafka is down the worker still
+	// drains jobs already in the queue.
+	var wg sync.WaitGroup
+	if client, cerr := kgo.NewClient(
+		kgo.SeedBrokers(cfg.Kafka.Brokers...),
+		kgo.ConsumeTopics("cinefund.events"),
+		kgo.ConsumerGroup("cinefund-transcoder"),
+	); cerr == nil {
+		defer client.Close()
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cons := media.NewConsumer(client, jobRepo, "cinefund.events", log)
+			if err := cons.Run(ctx); err != nil {
+				log.Warn("consumer stopped", "error", err)
+			}
+		}()
+	}
+
 	if err := worker.Run(ctx); err != nil {
 		log.Error("worker stopped with error", "error", err)
 		os.Exit(1)
 	}
+	wg.Wait()
 	slog.SetDefault(log)
 }

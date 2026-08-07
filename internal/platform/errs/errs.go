@@ -1,9 +1,4 @@
-// Package errs gives every error a Kind, and maps Kind to an HTTP status in
-// exactly one place.
-//
-// The rule: handlers never call c.JSON(500, ...). They return an error and the
-// error middleware decides the status. That way "what status does a duplicate
-// pledge produce" has one answer, in one file, instead of forty.
+// Package errs maps errors to HTTP statuses in one place.
 package errs
 
 import (
@@ -15,20 +10,18 @@ import (
 type Kind string
 
 const (
-	KindInvalid      Kind = "INVALID"       // 400 - malformed or failed validation
-	KindUnauthorized Kind = "UNAUTHORIZED"  // 401 - no or bad credentials
-	KindForbidden    Kind = "FORBIDDEN"     // 403 - authenticated, not allowed
-	KindNotFound     Kind = "NOT_FOUND"     // 404
-	KindConflict     Kind = "CONFLICT"      // 409 - state machine or uniqueness
+	KindInvalid       Kind = "INVALID"       // 400 - malformed or failed validation
+	KindUnauthorized  Kind = "UNAUTHORIZED"  // 401 - no or bad credentials
+	KindForbidden     Kind = "FORBIDDEN"     // 403 - authenticated, not allowed
+	KindNotFound      Kind = "NOT_FOUND"     // 404
+	KindConflict      Kind = "CONFLICT"      // 409 - state machine or uniqueness
 	KindUnprocessable Kind = "UNPROCESSABLE" // 422 - semantically wrong
-	KindRateLimited  Kind = "RATE_LIMITED"  // 429
-	KindInternal     Kind = "INTERNAL"      // 500
-	KindUnavailable  Kind = "UNAVAILABLE"   // 503 - a dependency is down
+	KindRateLimited   Kind = "RATE_LIMITED"  // 429
+	KindInternal      Kind = "INTERNAL"      // 500
+	KindUnavailable   Kind = "UNAVAILABLE"   // 503 - a dependency is down
 )
 
-// Error carries a machine-readable Code for clients, a human Message, optional
-// structured Details (e.g. per-field validation failures), and a wrapped cause
-// that is logged but never serialised to the client.
+// Error has a code for clients and a cause for logs.
 type Error struct {
 	Kind    Kind
 	Code    string
@@ -46,10 +39,7 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.cause }
 
-// WithDetails attaches structured detail (validation failures, for instance).
 func (e *Error) WithDetails(d any) *Error { e.Details = d; return e }
-
-// WithCause attaches an underlying error for the logs. Never shown to clients.
 func (e *Error) WithCause(err error) *Error { e.cause = err; return e }
 
 func newf(k Kind, code, format string, args ...any) *Error {
@@ -84,8 +74,7 @@ func Unavailable(code, format string, a ...any) *Error {
 	return newf(KindUnavailable, code, format, a...)
 }
 
-// HTTPStatus maps any error to a status code. An error that is not an *Error is
-// a bug that escaped, so it maps to 500 - deliberately, rather than guessing.
+// HTTPStatus maps an error to a status code. Unknown errors get 500.
 func HTTPStatus(err error) int {
 	var e *Error
 	if !errors.As(err, &e) {
@@ -113,7 +102,7 @@ func HTTPStatus(err error) int {
 	}
 }
 
-// Code returns the client-facing code, or a generic one for unwrapped errors.
+// Code returns the client-facing code.
 func Code(err error) string {
 	var e *Error
 	if errors.As(err, &e) {

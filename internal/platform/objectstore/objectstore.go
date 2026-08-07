@@ -1,10 +1,3 @@
-// Package objectstore wraps S3-compatible storage.
-//
-// The API process never streams video bytes through itself: uploads go straight
-// to storage with a presigned PUT, and playback segments are fetched by the
-// player from presigned GET URLs. This package only ever signs URLs and moves
-// small files (playlists, posters) - plus the transcoder's rendition uploads,
-// which happen in a worker, not in a request.
 package objectstore
 
 import (
@@ -20,12 +13,7 @@ import (
 
 type Config struct {
 	Endpoint string
-	// PublicEndpoint is what a browser can resolve. It differs from Endpoint
-	// whenever the API reaches storage over an internal hostname - in docker
-	// compose the API talks to "minio:9000" but the browser must be handed
-	// "localhost:9000". Signing against the wrong one produces a URL that is
-	// cryptographically valid and unreachable, which presents as a CORS or DNS
-	// error and costs an hour to diagnose. See docs/10 §6.
+	// PublicEndpoint is what the browser can reach (differs from Endpoint in docker)
 	PublicEndpoint string
 	AccessKey      string
 	SecretKey      string
@@ -33,16 +21,13 @@ type Config struct {
 	UseSSL         bool
 }
 
-// Store is S3-compatible object storage.
 type Store struct {
 	internal *minio.Client
 	public   *minio.Client
 	bucket   string
 }
 
-// New builds a Store for one bucket. Two clients are constructed: one against
-// the internal endpoint for real operations, one against the public endpoint
-// used only to sign URLs handed to a browser.
+// New builds a store with separate internal/public clients.
 func New(cfg Config, bucket string) (*Store, error) {
 	mk := func(endpoint string) (*minio.Client, error) {
 		host, secure, err := splitEndpoint(endpoint, cfg.UseSSL)
@@ -70,7 +55,7 @@ func New(cfg Config, bucket string) (*Store, error) {
 	return &Store{internal: internal, public: public, bucket: bucket}, nil
 }
 
-// splitEndpoint accepts either "host:port" or a full URL.
+// splitEndpoint handles both "host:port" and full URLs.
 func splitEndpoint(endpoint string, defaultSSL bool) (string, bool, error) {
 	if endpoint == "" {
 		return "", false, fmt.Errorf("empty endpoint")
@@ -99,8 +84,7 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 	return obj, nil
 }
 
-// Stat verifies an object exists and returns its size. Used by POST /complete to
-// confirm the client actually uploaded what it claimed.
+// Stat checks an object exists and returns its size.
 func (s *Store) Stat(ctx context.Context, key string) (int64, string, error) {
 	info, err := s.internal.StatObject(ctx, s.bucket, key, minio.StatObjectOptions{})
 	if err != nil {
@@ -109,8 +93,7 @@ func (s *Store) Stat(ctx context.Context, key string) (int64, string, error) {
 	return info.Size, info.ContentType, nil
 }
 
-// PresignedGet signs a URL against the INTERNAL endpoint. Use it for anything
-// fetched server-side, including the transcoder's FFmpeg input.
+// PresignedGet signs against the internal endpoint (for server-side use).
 func (s *Store) PresignedGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	u, err := s.internal.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
 	if err != nil {
@@ -119,8 +102,7 @@ func (s *Store) PresignedGet(ctx context.Context, key string, ttl time.Duration)
 	return u.String(), nil
 }
 
-// PresignedGetPublic signs against the browser-reachable endpoint. Use it for
-// anything embedded in a playlist or returned to a client.
+// PresignedGetPublic signs against the browser-reachable endpoint.
 func (s *Store) PresignedGetPublic(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	u, err := s.public.PresignedGetObject(ctx, s.bucket, key, ttl, nil)
 	if err != nil {
@@ -129,7 +111,7 @@ func (s *Store) PresignedGetPublic(ctx context.Context, key string, ttl time.Dur
 	return u.String(), nil
 }
 
-// PresignedPut signs an upload URL for the browser.
+// PresignedPut signs a PUT URL for browser uploads.
 func (s *Store) PresignedPut(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	u, err := s.public.PresignedPutObject(ctx, s.bucket, key, ttl)
 	if err != nil {

@@ -1,8 +1,3 @@
-// Package pledge owns pledges, payments, the ledger, refunds and payouts.
-//
-// They live in one package because they are one transactional unit: you cannot
-// capture a pledge without writing ledger entries, so splitting them across
-// packages would mean exporting a transaction handle between packages.
 package pledge
 
 import (
@@ -15,19 +10,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Repo is the Postgres implementation. It binds a transaction into a Queries
-// handle so the service can run several statements atomically, and implements
-// the standalone Repository writes that happen outside any transaction.
+// Repo is the Postgres implementation.
 type Repo struct {
 	pool *pgxpool.Pool
 }
 
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
 
-// Bound returns a Queries tied to tx. The service gets one from its TxRunner.
+// Bound wraps a tx as Queries.
 func (r *Repo) Bound(tx pgx.Tx) Queries { return &pgQueries{tx: tx} }
 
-// Do runs fn inside a transaction, handing it tx-bound Queries.
+// Do runs fn in a transaction.
 func (r *Repo) Do(ctx context.Context, fn func(q Queries) error) error {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -46,7 +39,7 @@ func (r *Repo) AttachOrder(ctx context.Context, pledgeID uuid.UUID, orderID stri
 	return err
 }
 
-// pgQueries is a Queries bound to one transaction.
+// pgQueries wraps a single tx.
 type pgQueries struct {
 	tx pgx.Tx
 }
@@ -181,8 +174,6 @@ func (q *pgQueries) InsertOutbox(ctx context.Context, evt OutboxEvent) error {
 	return err
 }
 
-// scanPledge reads a full pledge row. Uses an interface so both QueryRow paths
-// share the same scanner.
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanPledge(row rowScanner) (*Pledge, error) {

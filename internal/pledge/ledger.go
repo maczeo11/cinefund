@@ -9,7 +9,7 @@ import (
 	"github.com/maczeo11/cinefund/internal/platform/postgres"
 )
 
-// AccountKind is the set of ledger account kinds from migrations/0011.
+// AccountKind matches the check constraint in migrations/0011.
 type AccountKind string
 
 const (
@@ -38,10 +38,7 @@ type LedgerEntry struct {
 	Amount        int64
 }
 
-// Queries is the transaction-scoped persistence handle the ledger joins so its
-// writes are part of the caller's transaction - a ledger method that opens its
-// own transaction is a bug, because it would let the domain write commit while
-// the ledger write rolls back.
+// Queries is tx-scoped so ledger writes are in the same tx as domain writes.
 type Queries interface {
 	InsertPledge(ctx context.Context, p *Pledge) error
 	GetPledgeForUpdate(ctx context.Context, id uuid.UUID) (*Pledge, error)
@@ -59,14 +56,12 @@ type Queries interface {
 	InsertOutbox(ctx context.Context, evt OutboxEvent) error
 }
 
-// Ledger owns the double-entry writes for money movements.
 type Ledger struct{}
 
 func NewLedger() *Ledger { return &Ledger{} }
 
-// RecordPledgeCapture writes the escrow movements for a captured pledge. It is
-// idempotent via uq_ledger_txn_reference: replaying a capture cannot produce a
-// second set of entries.
+// RecordPledgeCapture writes the double-entry ledger rows for a capture.
+// Idempotent via uq_ledger_txn_reference.
 func (l *Ledger) RecordPledgeCapture(ctx context.Context, q Queries, p *Pledge, gatewayFee int64) error {
 	txnID, err := q.InsertLedgerTransaction(ctx, LedgerTxn{
 		Kind:          "PLEDGE_CAPTURE",

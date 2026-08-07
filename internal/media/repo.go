@@ -1,4 +1,3 @@
-// Package media owns media assets and transcode jobs.
 package media
 
 import (
@@ -13,20 +12,11 @@ import (
 	"github.com/maczeo11/cinefund/internal/media/transcode"
 )
 
-// JobRepo implements transcode.JobStore against Postgres.
 type JobRepo struct{ pool *pgxpool.Pool }
 
 func NewJobRepo(pool *pgxpool.Pool) *JobRepo { return &JobRepo{pool: pool} }
 
-// Claim atomically takes one claimable job.
-//
-// FOR UPDATE SKIP LOCKED is what lets N transcoder replicas run with zero
-// coordination: each grabs a different row instead of all of them blocking on
-// the same one. The subquery picks the row, the outer UPDATE takes it, and both
-// happen in one statement so there is no window between select and claim.
-//
-// The ORDER BY prefers QUEUED work over expired leases, so a healthy backlog is
-// drained before retrying something that already failed once.
+// FOR UPDATE SKIP LOCKED so N workers grab different rows without blocking.
 const claimSQL = `
 WITH claimed AS (
     UPDATE transcode_jobs
@@ -69,9 +59,7 @@ func (r *JobRepo) Claim(ctx context.Context, workerID string, leaseTTL time.Dura
 	return &j, nil
 }
 
-// Heartbeat extends the lease. The worker_id predicate is a fencing check: once
-// another worker has reclaimed this job, this UPDATE matches zero rows and the
-// caller must abort rather than keep writing rendition keys.
+// worker_id in WHERE is the fencing check — 0 rows matched = someone else owns it
 const heartbeatSQL = `
 UPDATE transcode_jobs
    SET lease_expires_at = now() + ($3::double precision * interval '1 second'),
@@ -89,9 +77,7 @@ func (r *JobRepo) Heartbeat(
 	return tag.RowsAffected() > 0, nil
 }
 
-// Succeed marks the job done and the asset READY, in one transaction. An outbox
-// row goes in the same transaction so the event cannot be lost if the process
-// dies immediately after commit.
+// Succeed marks job done + asset READY + outbox event in one tx.
 func (r *JobRepo) Succeed(
 	ctx context.Context, jobID, assetID uuid.UUID, workerID string,
 	masterKey, posterKey string, renditions []byte, probe []byte,
@@ -133,8 +119,7 @@ func (r *JobRepo) Succeed(
 	})
 }
 
-// Fail records a retryable or terminal failure. A retryable failure returns the
-// job to QUEUED with the lease released, so any worker can pick it up.
+// Fail returns retryable jobs to QUEUED, or marks terminal ones FAILED.
 func (r *JobRepo) Fail(ctx context.Context, jobID uuid.UUID, workerID, reason string, retryable bool) error {
 	if retryable {
 		_, err := r.pool.Exec(ctx, `
@@ -168,8 +153,7 @@ func (r *JobRepo) Fail(ctx context.Context, jobID uuid.UUID, workerID, reason st
 	})
 }
 
-// Reject marks the asset permanently unusable. Never retried: re-running a file
-// with no video stream will fail exactly the same way.
+// Reject — permanent, never retried.
 func (r *JobRepo) Reject(
 	ctx context.Context, jobID, assetID uuid.UUID, workerID string,
 	reason transcode.RejectReason, detail string, probe []byte,
@@ -205,12 +189,7 @@ func (r *JobRepo) Reject(
 	})
 }
 
-// Enqueue creates the job for an uploaded asset.
-//
-// uq_job_asset_version makes this idempotent: the same Kafka message delivered
-// twice produces one job, which is test M8. Delivery is at-least-once, so the
-// constraint rather than a hopeful existence check is what makes the consumer
-// safe.
+// Enqueue creates a job. Idempotent via uq_job_asset_version.
 func (r *JobRepo) Enqueue(ctx context.Context, assetID uuid.UUID, pipelineVersion int) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx, `

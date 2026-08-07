@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// fakeRedis implements the Redis interface for tests. It also supports
-// Flush, which is how test P5 is structured: Redis loses the key between two
-// deliveries, and only the Postgres constraint can catch the duplicate.
+// in-memory redis for tests, has Flush() to simulate redis going down
 type fakeRedis struct {
 	mu   sync.Mutex
 	keys map[string]time.Time

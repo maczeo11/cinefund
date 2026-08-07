@@ -17,8 +17,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Job is what a worker claims. Declared here rather than imported from the media
-// package because the consumer declares the interface it needs.
+// Job is what the worker claims from the queue.
 type Job struct {
 	ID              uuid.UUID
 	AssetID         uuid.UUID
@@ -31,40 +30,22 @@ type Job struct {
 	Purpose     Purpose
 }
 
-// JobStore is the persistence the worker needs. Every method is scoped by
-// workerID where a stale worker could otherwise do damage.
 type JobStore interface {
-	// Claim atomically takes one QUEUED job, or one whose lease has expired.
-	// Returns (nil, nil) when there is nothing to do.
 	Claim(ctx context.Context, workerID string, leaseTTL time.Duration) (*Job, error)
-
-	// Heartbeat extends the lease and records progress. It returns false when
-	// the update matched no rows, which means another worker reclaimed the job.
 	Heartbeat(ctx context.Context, jobID uuid.UUID, workerID string,
 		leaseTTL time.Duration, progress, speed float64, tasks []byte) (bool, error)
-
-	// Succeed marks the job done and the asset READY.
 	Succeed(ctx context.Context, jobID, assetID uuid.UUID, workerID string,
 		masterKey, posterKey string, renditions []byte, probe []byte,
 		durationSecs float64, width, height, rotation int) error
-
-	// Fail marks a retryable failure. The job goes back to QUEUED unless
-	// attempts are exhausted.
 	Fail(ctx context.Context, jobID uuid.UUID, workerID string, reason string, retryable bool) error
-
-	// Reject marks the asset permanently REJECTED. Never retried.
 	Reject(ctx context.Context, jobID, assetID uuid.UUID, workerID string,
 		reason RejectReason, detail string, probe []byte) error
 }
 
-// ObjectStore is the subset of storage the worker uses. io.Reader rather than a
-// path so a test can supply an in-memory store with no filesystem.
 type ObjectStore interface {
 	Put(ctx context.Context, key string, r io.Reader, size int64, contentType string) error
 	PresignedGet(ctx context.Context, key string, ttl time.Duration) (string, error)
 }
-
-// Config tunes the worker.
 type Config struct {
 	WorkerID      string
 	Concurrency   int           // simultaneous FFmpeg processes
@@ -81,10 +62,6 @@ func (c *Config) applyDefaults() {
 		c.WorkerID = uuid.NewString()
 	}
 	if c.Concurrency <= 0 {
-		// FFmpeg is CPU-bound and already multi-threaded. Running NumCPU
-		// concurrent encodes gives each ~1 core, so all of them finish slowly
-		// with NumCPU times the peak memory. Four threads per encode and
-		// NumCPU/4 concurrent encodes keeps each one fast.
 		c.Concurrency = max(1, runtime.NumCPU()/4)
 	}
 	if c.LeaseTTL <= 0 {
@@ -94,7 +71,7 @@ func (c *Config) applyDefaults() {
 		c.HeartbeatEach = c.LeaseTTL / 3
 	}
 	if c.JobTimeout <= 0 {
-		c.JobTimeout = 2 * time.Hour
+		c.JobTimeout = 2 * time.Hour // TODO: maybe lower this for shorter videos
 	}
 	if c.MaxAttempts <= 0 {
 		c.MaxAttempts = 3
@@ -107,10 +84,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
-// ErrJobStolen means the lease was reclaimed by another worker mid-job.
-var ErrJobStolen = errors.New("job lease reclaimed by another worker")
-
-// Worker claims transcode jobs and runs them.
+var ErrJobStolen = errors.New("job stolen by another worker")
 type Worker struct {
 	cfg    Config
 	jobs   JobStore
@@ -119,7 +93,7 @@ type Worker struct {
 	prober *Prober
 	log    *slog.Logger
 
-	sem chan struct{} // bounds concurrent FFmpeg processes across all jobs
+	sem chan struct{}
 }
 
 func NewWorker(cfg Config, jobs JobStore, store ObjectStore, runner *Runner, prober *Prober, log *slog.Logger) *Worker {
@@ -135,7 +109,7 @@ func NewWorker(cfg Config, jobs JobStore, store ObjectStore, runner *Runner, pro
 	}
 }
 
-// Run polls for jobs until ctx is cancelled.
+// Run polls for jobs until ctx is done.
 func (w *Worker) Run(ctx context.Context) error {
 	w.log.Info("transcoder started", "concurrency", w.cfg.Concurrency, "work_dir", w.cfg.WorkDir)
 	t := time.NewTicker(w.cfg.PollInterval)
@@ -160,17 +134,12 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// process runs one job to a terminal state. It never returns an error: every
-// outcome is recorded on the job.
+// process runs one job to completion or failure.
 func (w *Worker) process(parent context.Context, job *Job) {
 	log := w.log.With("job_id", job.ID, "asset_id", job.AssetID, "attempt", job.Attempt)
 	log.Info("job claimed")
 
-	// jobCtx is cancelled by the timeout, by shutdown, OR by the heartbeat
-	// discovering the lease was stolen. Everything downstream - including the
-	// FFmpeg subprocess - hangs off it, so a steal stops the encode rather than
-	// letting two workers write the same rendition keys concurrently. That is
-	// the one genuinely corrupting failure mode in this pipeline.
+	// cancelled on timeout, shutdown, or lease stolen
 	jobCtx, cancel := context.WithTimeout(parent, w.cfg.JobTimeout)
 	defer cancel()
 
@@ -193,8 +162,7 @@ func (w *Worker) process(parent context.Context, job *Job) {
 
 	select {
 	case <-stolen:
-		// Another worker owns this job now. Write nothing: any status update
-		// here would stomp on the new owner's progress.
+		// someone else owns it now, don't write anything
 		log.Warn("job was reclaimed by another worker; abandoning without writing")
 		return
 	default:
@@ -256,12 +224,8 @@ func (s *jobState) update(i int, p Progress, done bool) {
 	}
 }
 
-// heartbeat extends the lease on a timer. onStolen fires when the update
-// matches zero rows.
-//
-// The filter includes worker_id, which makes it a fencing check rather than a
-// liveness ping: if another worker reclaimed this job because we stalled, our
-// UPDATE matches nothing and that IS the signal to stop.
+// heartbeat extends the lease. If the UPDATE matches 0 rows, another worker
+// reclaimed the job and we need to stop.
 func (w *Worker) heartbeat(ctx context.Context, job *Job, state *jobState, onStolen func()) {
 	t := time.NewTicker(w.cfg.HeartbeatEach)
 	defer t.Stop()
@@ -274,9 +238,7 @@ func (w *Worker) heartbeat(ctx context.Context, job *Job, state *jobState, onSto
 			progress, speed, tasks := state.snapshot()
 			ok, err := w.jobs.Heartbeat(ctx, job.ID, w.cfg.WorkerID, w.cfg.LeaseTTL, progress, speed, tasks)
 			if err != nil {
-				// A transient database error is not proof the lease is gone.
-				// Keep going: the lease will expire on its own if we really are
-				// partitioned, and the reclaim path handles that correctly.
+				// transient db error — keep going, lease will expire if we're really gone
 				w.log.Warn("heartbeat failed", "job_id", job.ID, "error", err)
 				continue
 			}
@@ -289,11 +251,9 @@ func (w *Worker) heartbeat(ctx context.Context, job *Job, state *jobState, onSto
 	}
 }
 
-// runJob is the pipeline: probe -> validate -> ladder -> encode -> upload ->
-// master -> ready.
+// runJob: probe → validate → ladder → encode each rung → upload → write master last.
 func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
-	// Presigned GET, valid for the whole job. FFmpeg reads it over HTTP and
-	// range-requests only what it needs, so a 4 GB source is never downloaded.
+	// ffmpeg reads the presigned URL over HTTP (range requests)
 	srcURL, err := w.store.PresignedGet(ctx, job.StorageKey, w.cfg.JobTimeout+10*time.Minute)
 	if err != nil {
 		return fmt.Errorf("presign source: %w", err)
@@ -307,7 +267,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 	state.probeRaw = probe.Raw
 	state.mu.Unlock()
 
-	// Reject before spending a single CPU-second on encoding.
+	// reject early before wasting cpu on encoding
 	if err := probe.Validate(job.Purpose, job.ContentType); err != nil {
 		return err
 	}
@@ -320,7 +280,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 	state.tasks = NewTasks(ladder)
 	state.mu.Unlock()
 
-	// One temp dir per job, removed unconditionally - including on panic.
+	// temp dir per job, always cleaned up
 	dir, err := os.MkdirTemp(w.cfg.WorkDir, "cf-"+job.ID.String()+"-")
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -335,7 +295,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 	}
 	defer os.RemoveAll(dir)
 
-	// --- encode every rung, bounded by the global semaphore ----------------
+	// encode all rungs concurrently, bounded by the semaphore
 	var (
 		wg       sync.WaitGroup
 		mu       sync.Mutex
@@ -376,7 +336,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 		return err
 	}
 
-	// --- upload every rendition BEFORE the master --------------------------
+	// upload renditions before master — master is the commit point
 	renditions := make([]renditionMeta, 0, len(ladder))
 	for _, rung := range ladder {
 		prefix := RenditionPrefix(job.AssetID.String(), job.PipelineVersion, rung.Name)
@@ -392,7 +352,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 		})
 	}
 
-	// Poster is best-effort: a film without a thumbnail is still watchable.
+	// poster is best-effort
 	posterKey := ""
 	posterPath := filepath.Join(dir, "poster.webp")
 	if err := w.runner.ExtractPoster(ctx, srcURL, probe.DurationSecs, posterPath); err != nil {
@@ -406,7 +366,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 		}
 	}
 
-	// --- master LAST: it is the commit point -------------------------------
+	// master playlist last
 	masterPath := filepath.Join(dir, "master.m3u8")
 	if err := os.WriteFile(masterPath, BuildMasterPlaylist(ladder, dispW, dispH), 0o644); err != nil {
 		return fmt.Errorf("write master: %w", err)

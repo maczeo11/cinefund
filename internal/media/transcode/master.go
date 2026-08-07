@@ -90,7 +90,7 @@ func RewriteVariantPlaylist(playlist []byte, assetID string, pipelineVersion int
 		// A media line. Validate before signing: this playlist is a file we
 		// generated, but treating it as untrusted input costs two lines and
 		// closes the path where a crafted filename becomes a signed URL to an
-		// arbitrary object. Test M12.
+		// arbitrary object.
 		if strings.ContainsAny(line, "/\\") || strings.Contains(line, "..") {
 			return nil, fmt.Errorf("unexpected path in playlist: %q", line)
 		}

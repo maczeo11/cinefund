@@ -54,7 +54,7 @@ func assertRejected(t *testing.T, err error, want RejectReason) {
 	}
 }
 
-// M5: an audio-only file is rejected, and no FFmpeg is ever invoked because the
+// an audio-only file is rejected, and no FFmpeg is ever invoked because the
 // rejection happens on the probe result.
 func TestValidate_AudioOnlyRejected(t *testing.T) {
 	err := mustParse(t, audioOnlyJSON).Validate(PurposeFilm, "video/mp4")

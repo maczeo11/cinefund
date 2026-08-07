@@ -20,7 +20,7 @@ var ErrSignatureInvalid = errors.New("invalid signature")
 //
 // raw must be the exact bytes that arrived on the wire. Re-marshalling the
 // parsed JSON before verification will fail intermittently on key order and
-// whitespace, which is how an evening gets lost (docs/06 §3).
+// whitespace.
 func VerifyRazorpaySignature(raw []byte, signature, secret string) error {
 	if signature == "" || secret == "" {
 		return ErrSignatureInvalid
@@ -29,9 +29,6 @@ func VerifyRazorpaySignature(raw []byte, signature, secret string) error {
 	_, _ = mac.Write(raw)
 	expected := hex.EncodeToString(mac.Sum(nil))
 
-	// subtle.ConstantTimeCompare prevents a timing side-channel that would let
-	// an attacker compare signatures byte by byte. Irrelevant here in practice,
-	// but it costs nothing and is the correct habit.
 	if subtle.ConstantTimeCompare([]byte(expected), []byte(signature)) != 1 {
 		return ErrSignatureInvalid
 	}
