@@ -21,7 +21,7 @@ type OrderRequest struct {
 	Amount   int64             // paise, same unit as our BIGINT - never multiply
 	Currency string            // "INR"
 	Receipt  string            // our pledge id, so a webhook can find its way home
-	Notes    map[string]string // pledge_id, campaign_id - the P12 recovery path
+	Notes    map[string]string // pledge_id, campaign_id - lets a webhook recover an unattached pledge
 
 	// PaymentCapture = 1 means auto-capture: Razorpay settles the payment at
 	// authorisation time and sends payment.captured, which is the event
@@ -52,8 +52,8 @@ type Payment struct {
 // RefundRequest asks the provider to refund a payment. IdempotencyKey is a
 // deterministic value (derived from our refund id) the provider dedupes on.
 type RefundRequest struct {
-	PaymentID     string
-	Amount        int64
+	PaymentID      string
+	Amount         int64
 	IdempotencyKey string
 }
 

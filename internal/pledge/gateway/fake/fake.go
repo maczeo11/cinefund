@@ -2,7 +2,7 @@
 //
 // It satisfies gateway.Gateway in memory, records what it has been asked to do,
 // and can emit correctly-signed webhook payloads so the whole payment suite
-// (P1-P14) runs offline with no network and no credentials.
+// runs offline with no network and no credentials.
 package fake
 
 import (
