@@ -3,7 +3,7 @@
 .env.local
 *.env
 !.env.example
-
+AGENTS.md
 # Build output
 /bin/
 /dist/
@@ -43,3 +43,7 @@ coverage.*
 
 # Docker volumes if bind-mounted locally
 /deploy/data/
+
+# React frontend
+web/node_modules/
+web/dist/

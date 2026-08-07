@@ -31,12 +31,17 @@ the part where being wrong costs real money.
   a fencing token so a reclaimed job aborts instead of racing the new owner.
 - API skeleton with liveness/readiness probes; boots against the real stack.
 
-**Next**
+**Next** (scope locked to the four resume claims — see
+[16 — Build order](docs/16-BUILD-ORDER.md))
 
-- HTTP layer: `POST /webhooks/razorpay`, `POST /campaigns/{id}/pledges`
-- Presigned upload + `POST /complete` so the transcoder has something to claim
-- Auth, campaigns, then the outbox → Kafka dispatcher
-- See [16 — Build order](docs/16-BUILD-ORDER.md) for the full plan.
+- REST API routes: `POST /campaigns/{id}/pledges`, `POST /webhooks/razorpay`,
+  presigned upload + complete
+- Real Razorpay gateway adapter (fake stays for offline tests)
+- Enqueue path + `make sample` → one real end-to-end transcode
+- Outbox → Kafka dispatcher (`cmd/dispatcher`) + one consumer
+
+Explicit non-goals: auth, rate limiting, campaign/identity modules, gRPC,
+entitlements, load/fault-injection testing, and refund/payout HTTP flows.
 
 **Tests**
 
