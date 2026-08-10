@@ -1,5 +1,4 @@
-// Package razorpay is the real payment-provider adapter. It talks to the
-// Razorpay REST API over HTTP; gateway/fake is the in-memory version tests use.
+// Package razorpay is the real payment-provider adapter.
 package razorpay
 
 import (
@@ -14,8 +13,7 @@ import (
 	"github.com/maczeo11/cinefund/internal/pledge/gateway"
 )
 
-// Client is an HTTP client with a base URL. The base URL is swappable so tests
-// can point it at a local fake server.
+// Client is an HTTP client for the Razorpay API.
 type Client struct {
 	keyID     string
 	keySecret string
@@ -23,7 +21,7 @@ type Client struct {
 	http      *http.Client
 }
 
-// New builds a client. baseURL defaults to the production Razorpay endpoint.
+// New builds a client.
 func New(keyID, keySecret string, baseURL string) *Client {
 	if baseURL == "" {
 		baseURL = "https://api.razorpay.com"
@@ -36,8 +34,7 @@ func New(keyID, keySecret string, baseURL string) *Client {
 	}
 }
 
-// CreateOrder posts a new order. Razorpay returns 200 with the order object, or
-// 4xx with an error object; either way the JSON shape is the same envelope.
+// CreateOrder posts a new order.
 func (c *Client) CreateOrder(ctx context.Context, req gateway.OrderRequest) (*gateway.Order, error) {
 	body, err := json.Marshal(map[string]any{
 		"amount":          req.Amount,
@@ -67,8 +64,7 @@ func (c *Client) CreateOrder(ctx context.Context, req gateway.OrderRequest) (*ga
 	}, nil
 }
 
-// FetchPayments lists the payments attempted against an order. Razorpay returns
-// them under {"items": [...]}.
+// FetchPayments lists the payments attempted against an order.
 func (c *Client) FetchPayments(ctx context.Context, orderID string) ([]gateway.Payment, error) {
 	var out struct {
 		Items []struct {
@@ -125,8 +121,7 @@ func (c *Client) CreateRefund(ctx context.Context, req gateway.RefundRequest) (*
 	}, nil
 }
 
-// do performs one authenticated request. The Razorpay API uses HTTP Basic auth
-// with the key id and secret.
+// do performs one authenticated request.
 func (c *Client) do(ctx context.Context, method, path string, body []byte, dst any) error {
 	var r io.Reader
 	if body != nil {

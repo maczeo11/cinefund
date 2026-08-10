@@ -1,8 +1,4 @@
-// Package fake is the deterministic test double for the payment gateway.
-//
-// It satisfies gateway.Gateway in memory, records what it has been asked to do,
-// and can emit correctly-signed webhook payloads so the whole payment suite
-// runs offline with no network and no credentials.
+// Package fake is a test double for the payment gateway.
 package fake
 
 import (
@@ -16,20 +12,19 @@ import (
 	"github.com/maczeo11/cinefund/internal/pledge/gateway"
 )
 
-// Fake is an in-memory gateway. Not safe for concurrent use unless you hold mu.
+// Fake is an in-memory gateway.
 type Fake struct {
 	mu     sync.Mutex
 	orders map[string]*gateway.Order
 	fails  map[string]error // method -> error to inject
 }
 
-// New returns an empty fake with an in-memory order store.
+// New returns an empty fake.
 func New() *Fake {
 	return &Fake{orders: make(map[string]*gateway.Order)}
 }
 
-// FailNext makes the next call to method return err, then clears the hook.
-// method is one of "CreateOrder", "FetchPayments", "CreateRefund".
+// FailNext makes the next call to method return err.
 func (f *Fake) FailNext(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -49,7 +44,7 @@ func (f *Fake) takeFail(method string) error {
 	return nil
 }
 
-// CreateOrder records an order keyed by receipt (our pledge id).
+// CreateOrder records an order keyed by receipt.
 func (f *Fake) CreateOrder(_ context.Context, req gateway.OrderRequest) (*gateway.Order, error) {
 	if err := f.takeFail("CreateOrder"); err != nil {
 		return nil, err
@@ -66,8 +61,7 @@ func (f *Fake) CreateOrder(_ context.Context, req gateway.OrderRequest) (*gatewa
 	return o, nil
 }
 
-// FetchPayments returns an empty list unless Capture was called, in which case
-// it returns one successful payment - enough for the reconciliation path.
+// FetchPayments returns the payments for an order.
 func (f *Fake) FetchPayments(_ context.Context, orderID string) ([]gateway.Payment, error) {
 	if err := f.takeFail("FetchPayments"); err != nil {
 		return nil, err
@@ -109,9 +103,7 @@ type PaymentEntity struct {
 	Status  string `json:"status"`
 }
 
-// Capture records a successful payment against orderID and returns the signed
-// webhook body + signature for event "payment.captured". The signature is
-// computed with secret exactly as Razorpay does: HMAC-SHA256(body, secret).
+// Capture records a successful payment and returns the signed webhook body.
 func (f *Fake) Capture(orderID string, entity PaymentEntity, secret string) (body []byte, sig string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

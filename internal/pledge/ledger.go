@@ -61,7 +61,6 @@ type Ledger struct{}
 func NewLedger() *Ledger { return &Ledger{} }
 
 // RecordPledgeCapture writes the double-entry ledger rows for a capture.
-// Idempotent via uq_ledger_txn_reference.
 func (l *Ledger) RecordPledgeCapture(ctx context.Context, q Queries, p *Pledge, gatewayFee int64) error {
 	txnID, err := q.InsertLedgerTransaction(ctx, LedgerTxn{
 		Kind:          "PLEDGE_CAPTURE",

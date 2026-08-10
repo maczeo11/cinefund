@@ -16,7 +16,7 @@ type JobRepo struct{ pool *pgxpool.Pool }
 
 func NewJobRepo(pool *pgxpool.Pool) *JobRepo { return &JobRepo{pool: pool} }
 
-// FOR UPDATE SKIP LOCKED so N workers grab different rows without blocking.
+// FOR UPDATE SKIP LOCKED so N workers grab different rows.
 const claimSQL = `
 WITH claimed AS (
     UPDATE transcode_jobs
@@ -59,7 +59,7 @@ func (r *JobRepo) Claim(ctx context.Context, workerID string, leaseTTL time.Dura
 	return &j, nil
 }
 
-// worker_id in WHERE is the fencing check — 0 rows matched = someone else owns it
+// worker_id in WHERE is the fencing check.
 const heartbeatSQL = `
 UPDATE transcode_jobs
    SET lease_expires_at = now() + ($3::double precision * interval '1 second'),
@@ -119,7 +119,7 @@ func (r *JobRepo) Succeed(
 	})
 }
 
-// Fail returns retryable jobs to QUEUED, or marks terminal ones FAILED.
+// Fail returns retryable jobs to QUEUED, or marks them FAILED.
 func (r *JobRepo) Fail(ctx context.Context, jobID uuid.UUID, workerID, reason string, retryable bool) error {
 	if retryable {
 		_, err := r.pool.Exec(ctx, `
@@ -189,7 +189,7 @@ func (r *JobRepo) Reject(
 	})
 }
 
-// Enqueue creates a job. Idempotent via uq_job_asset_version.
+// Enqueue creates a job.
 func (r *JobRepo) Enqueue(ctx context.Context, assetID uuid.UUID, pipelineVersion int) (uuid.UUID, error) {
 	var id uuid.UUID
 	err := r.pool.QueryRow(ctx, `

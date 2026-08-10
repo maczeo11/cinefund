@@ -1,13 +1,4 @@
 // cmd/migrate applies the numbered SQL migrations in migrations/.
-//
-// Deliberately a separate binary rather than something the API does at startup:
-// N replicas racing to migrate on deploy is a good way to have an incident.
-//
-// Usage:
-//
-//	go run ./cmd/migrate up       apply every pending migration
-//	go run ./cmd/migrate down     roll back the most recently applied one
-//	go run ./cmd/migrate status   list applied / pending
 package main
 
 import (

@@ -1,137 +1,171 @@
 # CineFund
 
-Crowdfunding and streaming for short films. Creators launch campaigns for films
-that don't exist yet, backers fund them, and funded films get transcoded and
-streamed on the same platform.
+Crowdfunding platform for short films. Creators launch all-or-nothing campaigns,
+backers fund them through Razorpay, and funded films get transcoded into adaptive
+bitrate HLS for streaming.
 
-## What's here right now
+Built with Go, PostgreSQL, Redis, Kafka, MinIO, and FFmpeg.
 
-Work in progress. The money path is the first thing being built, because it's
-the part where being wrong costs real money.
+## How it works
 
-**Done**
+The system runs as five separate binaries sharing a common `internal/` codebase:
 
-- Migration runner + Postgres schema (16 migrations: users, campaigns, reward
-  tiers, pledges, payment events, double-entry ledger, refunds, payouts,
-  entitlements, outbox, idempotency keys, audit log, media assets and transcode
-  jobs). Applied against a live Postgres, including the deferred trigger that
-  makes an unbalanced ledger transaction fail at `COMMIT`.
-- Pledge service with a **gateway interface** so tests never touch the network:
-  order creation, webhook signature verification, idempotent capture handling
-  (Redis `SETNX` guard in front of a Postgres unique constraint), a state
-  machine, and ledger entries written in the same transaction as the state
-  change.
-- The whole pledge flow runs offline against a fake gateway and fake repo. The
-  concurrency tests (50× the same webhook → exactly one capture) are part of
-  the normal test run.
-- **Transcode pipeline**: ffprobe wrapper with rejection rules applied before
-  any encode starts, an ABR ladder that never upscales, the FFmpeg arg builder
-  with GOP settings pinned identically across rungs, duration-weighted progress,
-  the master playlist written last, and a worker whose lease uses `worker_id` as
-  a fencing token so a reclaimed job aborts instead of racing the new owner.
-- API skeleton with liveness/readiness probes; boots against the real stack.
+- **api** — HTTP server handling campaigns, pledges, uploads, and payment webhooks
+- **dispatcher** — polls an outbox table in Postgres and publishes events to Kafka
+- **transcoder** — consumes Kafka events and runs FFmpeg to produce HLS streams
+- **migrate** — applies embedded SQL migrations (no external tool dependencies)
+- **seed** — inserts deterministic test data for local development
 
-**Next** (scope locked to the four resume claims — see
-[16 — Build order](docs/16-BUILD-ORDER.md))
+```
+                          ┌──────────────┐
+                          │   Browser    │
+                          └──────┬───────┘
+                                 │
+                    ┌────────────▼────────────┐
+                    │    API Server (Gin)      │
+                    │                         │
+                    │  campaigns, pledges,    │
+                    │  uploads, webhooks      │
+                    └───┬────────┬────────┬───┘
+                        │        │        │
+               ┌────────▼──┐ ┌──▼────┐ ┌─▼──────────┐
+               │ PostgreSQL │ │ Redis │ │  Razorpay  │
+               │            │ └───────┘ └────────────┘
+               │  + outbox  │
+               └────┬───────┘
+                    │ poll (SKIP LOCKED)
+               ┌────▼───────┐
+               │ Dispatcher  │──────► Kafka
+               └─────────────┘          │
+                                   ┌────▼───────┐
+                                   │ Transcoder  │
+                                   │  (FFmpeg)   │
+                                   └────┬────────┘
+                                        │
+                                   ┌────▼────┐
+                                   │ MinIO/S3 │◄─── Browser (presigned uploads)
+                                   └──────────┘
+```
 
-- REST API routes: `POST /campaigns/{id}/pledges`, `POST /webhooks/razorpay`,
-  presigned upload + complete
-- Real Razorpay gateway adapter (fake stays for offline tests)
-- Enqueue path + `make sample` → one real end-to-end transcode
-- Outbox → Kafka dispatcher (`cmd/dispatcher`) + one consumer
+## What's interesting about it
 
-Explicit non-goals: auth, rate limiting, campaign/identity modules, gRPC,
-entitlements, load/fault-injection testing, and refund/payout HTTP flows.
+**Payments aren't just Stripe-checkout-and-done.** When Razorpay sends a webhook,
+the system does HMAC signature verification, then runs a two-layer idempotency
+check — Redis SETNX as a fast path, Postgres unique constraint as the durable
+fallback. Inside a single transaction it updates the pledge, increments the
+campaign total, bumps the tier count, and writes balanced double-entry ledger
+entries. If the DB write fails, it releases the Redis lock so retries aren't
+blocked.
 
-**Tests**
+**Money is tracked as a double-entry ledger.** Not just `balance += amount`.
+Every pledge capture produces matching DEBIT and CREDIT entries across escrow
+accounts. Postgres enforces the invariant that debits equal credits using a
+deferred constraint trigger at commit time. All amounts are in paise (integers)
+to avoid floating-point issues.
 
-`make test` runs the unit suite. `make test-race` runs the same suite under the
-race detector in a container — the race detector needs a 64-bit cgo toolchain,
-and the concurrency tests are the ones where that matters most.
+**Video goes through a real transcode pipeline.** Files upload directly to S3
+via presigned URLs — bytes never pass through the API server. The transcoder
+probes the file with ffprobe (codec validation, duration limits, resolution
+checks with rotation handling), generates an ABR ladder down from source
+resolution (never upscales), and encodes with strict GOP alignment — 24fps,
+48-frame keyframe interval, scene detection disabled — so HLS quality switching
+works without glitches. The master playlist uploads last as an atomic commit.
 
-## Stack
+**Workers handle crashes.** Transcode jobs are claimed via `SELECT FOR UPDATE
+SKIP LOCKED` with a lease timeout. Workers heartbeat to extend their lease. If a
+worker dies, another picks up the job. Fencing tokens prevent the dead worker
+from writing stale results if it wakes back up.
 
-| Concern | Choice |
-| --- | --- |
-| API | Go 1.26, Gin |
-| Database | PostgreSQL 16 (`pgx/v5`, no ORM) — one datastore for everything |
-| Cache / locks | Redis 7 |
-| Event bus | Kafka (`franz-go`), fed by a transactional outbox |
-| Object storage | MinIO locally, S3-compatible in prod |
-| Transcoding | FFmpeg subprocess, HLS ABR |
-| Payments | Razorpay Orders + Webhooks |
-| Telemetry | `log/slog`, OpenTelemetry, Prometheus |
+**Domain events don't get lost.** State changes and outbox rows insert in the
+same Postgres transaction. A separate dispatcher binary polls unpublished rows
+and pushes them to Kafka. If the API crashes after commit, the events survive
+in the outbox.
 
-A word on the single datastore: this was originally Postgres + MongoDB (Mongo
-for the catalog, Postgres for money). That was reversed before any code was
-written — the outbox does the job change streams were brought in for, and one
-store keeps every financial invariant declarative. Reasoning in
-[ADR-0010](docs/DECISIONS/ADR-0010-postgres-only.md).
+## Running locally
 
-## Why this project exists
-
-The interesting parts are the four places a naive implementation is quietly
-wrong:
-
-1. **A payment webhook arrives twice.** Razorpay retries on timeout; a naive
-   `campaign.raised += amount` double-credits the campaign. Belt and braces
-   here: a Redis `SETNX` guard in front of a Postgres unique constraint,
-   because Redis can lose the key.
-2. **The DB commits and the process dies before publishing.** The pledge is
-   recorded but no receipt email is sent and the search index goes stale. A
-   transactional outbox makes the domain write and the event insert one
-   Postgres transaction.
-3. **Transcoding a 4 GB film inside an HTTP handler.** Fixed by never letting
-   bytes touch the API: presigned upload straight to object storage, then a
-   pool of Go workers shelling out to FFmpeg.
-4. **All-or-nothing funding.** Money is held, not spent. If a campaign misses
-   its goal at the deadline, every pledge refunds — that needs a real
-   double-entry ledger, not an integer column.
-
-## Running it
+You need Go 1.26+, Docker, and FFmpeg (for the transcoder).
 
 ```bash
 cp .env.example .env
-make up          # postgres, redis, kafka, minio in Docker
-make migrate     # apply schema
-make run-api     # :8080
+make up              # postgres, redis, kafka, minio
+make migrate         # apply schema
+make seed            # sample data (optional)
+
+# each in its own terminal
+make run-api
+make run-dispatcher
+make run-transcoder
 ```
 
-The pledge tests don't need any of that:
+## Make targets
 
-```bash
-go test ./internal/pledge/...
+| Command            | What it does                                  |
+|--------------------|-----------------------------------------------|
+| `make up`          | Start infra containers                        |
+| `make down`        | Stop containers                               |
+| `make nuke`        | Stop + delete volumes                         |
+| `make logs`        | Tail container logs                           |
+| `make migrate`     | Run migrations forward                        |
+| `make migrate-down`| Roll back one migration                       |
+| `make seed`        | Insert dev data                               |
+| `make run-api`     | Start API on :8080                            |
+| `make run-dispatcher` | Start outbox publisher                     |
+| `make run-transcoder` | Start transcode workers                    |
+| `make test`        | Unit tests                                    |
+| `make test-race`   | Unit tests with race detector (runs in Docker)|
+| `make test-int`    | Integration tests (needs Docker services)     |
+| `make lint`        | golangci-lint                                 |
+
+## API
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET    | /health/live | Liveness check |
+| GET    | /health/ready | Readiness check (postgres + redis) |
+| GET    | /api/v1/campaigns | List campaigns |
+| POST   | /api/v1/campaigns | Create campaign (DRAFT) |
+| GET    | /api/v1/campaigns/:id | Get campaign |
+| POST   | /api/v1/campaigns/:id/publish | Set campaign LIVE |
+| POST   | /api/v1/campaigns/:id/tiers | Add reward tier |
+| POST   | /api/v1/campaigns/:id/pledges | Create pledge + payment order |
+| POST   | /api/v1/uploads | Get presigned upload URL |
+| POST   | /api/v1/uploads/:id/complete | Confirm upload, queue transcode |
+| POST   | /webhooks/razorpay | Payment webhooks |
+
+Full request/response docs in [docs/API.md](docs/API.md).
+
+## Testing
+
+- Unit tests use hand-written in-memory fakes, no mock frameworks
+- 50-goroutine concurrent webhook test proving exactly-once payment capture
+- Integration tests for dispatcher crash recovery and transcoder worker failover
+- Race detector runs in a Docker container via `make test-race`
+
+## Project layout
+
 ```
-
-## Documents
-
-The design was written up before the code; the docs are the reference the code
-is checked against. [Start here](docs/00-PRODUCT-SPEC.md).
-
-| # | Doc | Covers |
-| --- | --- | --- |
-| 00 | [Product spec](docs/00-PRODUCT-SPEC.md) | actors, funding rules, state machines, glossary |
-| 01 | [Architecture](docs/01-ARCHITECTURE.md) | components, request lifecycle, failure modes |
-| 02 | [Postgres data model](docs/02-DATA-MODEL-POSTGRES.md) | tables, indexes, constraints, invariants |
-| 04 | [API spec](docs/04-API-SPEC.md) | endpoints, errors, status codes |
-| 05 | [Auth & security](docs/05-AUTH-SECURITY.md) | JWT rotation, RBAC, threat model |
-| 06 | [Payments (Razorpay)](docs/06-PAYMENTS-RAZORPAY.md) | order creation, webhook verification, idempotency, refunds |
-| 07 | [Ledger](docs/07-LEDGER.md) | accounts, money movements, reconciliation |
-| 08 | [Eventing](docs/08-EVENTING-OUTBOX-KAFKA.md) | outbox, topics, retries, DLQ |
-| 09 | [Media pipeline](docs/09-MEDIA-PIPELINE.md) | upload → probe → transcode → HLS |
-| 10 | [Object storage](docs/10-OBJECT-STORAGE.md) | buckets, keys, presigning |
-| 11 | [Caching](docs/11-CACHING-REDIS.md) | key scheme, TTLs, invalidation |
-| 12 | [Rate limiting](docs/12-RATE-LIMITING.md) | token buckets, headers |
-| 13 | [gRPC control plane](docs/13-GRPC-CONTROL-PLANE.md) | worker contracts, progress |
-| 14 | [Observability](docs/14-OBSERVABILITY.md) | logs, metrics, traces, SLOs |
-| 15 | [Project layout](docs/15-PROJECT-LAYOUT.md) | file tree, package ownership |
-| 16 | [Build order](docs/16-BUILD-ORDER.md) | phases, acceptance criteria, calendar |
-| 17 | [Testing strategy](docs/17-TESTING-STRATEGY.md) | unit vs integration split |
-| 18 | [Local dev & deploy](docs/18-LOCAL-DEV-DEPLOY.md) | compose, env, runbook |
-| 19 | [Performance](docs/19-PERFORMANCE.md) | load tests, capacity, bottlenecks |
-| — | [Decision records](docs/DECISIONS/README.md) | why contested choices went the way they did |
-| — | [Devlog](docs/DEVLOG.md) | running notes: what broke, what was tried |
+cmd/
+  api/             HTTP server
+  dispatcher/      Outbox → Kafka
+  transcoder/      FFmpeg workers
+  migrate/         SQL migrations
+  seed/            Dev seeder
+internal/
+  campaign/        Campaign + tier domain
+  pledge/          Pledge, payments, ledger
+    gateway/       Payment gateway interface
+      fake/        In-memory fake (auto-activates in dev)
+      razorpay/    Real Razorpay client
+  media/           Uploads + transcoding
+    transcode/     FFmpeg pipeline
+  outbox/          Event dispatcher
+  platform/        Infrastructure (config, errors, logging, S3, postgres)
+migrations/        Raw SQL (16 pairs, embedded via embed.FS)
+deploy/            Docker Compose
+scripts/           Demo and test helpers
+web/               React frontend (Vite)
+```
 
 ## License
 
-Apache-2.0.
+MIT

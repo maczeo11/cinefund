@@ -35,7 +35,7 @@ func NewUploadStore(pool *pgxpool.Pool, obj *objectstore.Store) *UploadStore {
 	return &UploadStore{pool: pool, obj: obj}
 }
 
-// CreateAsset inserts a PENDING_UPLOAD row and returns its storage key.
+// CreateAsset inserts a PENDING_UPLOAD row.
 func (s *UploadStore) CreateAsset(ctx context.Context, ownerID uuid.UUID, campaignID *uuid.UUID, purpose transcode.Purpose, contentType string) (*Asset, error) {
 	id := uuid.New()
 	key := fmt.Sprintf("uploads/%s/%s", ownerID, id.String())
@@ -69,9 +69,7 @@ func (s *UploadStore) PresignPut(ctx context.Context, key string, ttl time.Durat
 	return s.obj.PresignedPut(ctx, key, ttl)
 }
 
-// MarkUploaded verifies the object actually exists (HEAD), then flips the row to
-// UPLOADED and emits the outbox event that the Kafka consumer turns into a
-// transcode job.
+// MarkUploaded verifies the object exists and flips the row to UPLOADED.
 func (s *UploadStore) MarkUploaded(ctx context.Context, assetID uuid.UUID) error {
 	return s.inTx(ctx, func(tx pgx.Tx) error {
 		var key string

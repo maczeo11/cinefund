@@ -44,6 +44,12 @@ coverage.*
 # Docker volumes if bind-mounted locally
 /deploy/data/
 
+# Personal notes (interview prep, not for repo)
+/notes/
+
+# AI agent config
+.claude/
+
 # React frontend
 web/node_modules/
 web/dist/

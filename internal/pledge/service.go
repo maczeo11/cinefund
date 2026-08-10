@@ -52,9 +52,6 @@ func NewService(
 }
 
 
-// CreatePledge
-
-
 type CreateInput struct {
 	CampaignID uuid.UUID
 	BackerID   uuid.UUID
@@ -64,9 +61,7 @@ type CreateInput struct {
 	Message    string
 }
 
-// CreatePledge inserts the pledge then creates the provider order outside
-// the transaction. If the order call fails, the pledge row stays for
-// the reconciliation sweep to clean up later.
+// CreatePledge inserts the pledge then creates the provider order.
 func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, error) {
 	var pledge *Pledge
 	err := s.tx.Do(ctx, func(q Queries) error {
@@ -130,8 +125,7 @@ func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, er
 		return nil, errs.Unavailable("PAYMENT_PROVIDER_UNAVAILABLE", "could not create payment order")
 	}
 
-	// failed to save locally but the order exists at Razorpay — the webhook
-	// notes carry our pledge id so it'll still link up
+	// webhook notes carry our pledge id so it'll still link up
 	if err := s.repo.AttachOrder(ctx, pledge.ID, order.ID); err != nil {
 		s.log.Error("order created but not attached", "pledge_id", pledge.ID, "order_id", order.ID, "error", err)
 	}
@@ -139,13 +133,10 @@ func (s *Service) CreatePledge(ctx context.Context, in CreateInput) (*Pledge, er
 	return pledge, nil
 }
 
-// VerifySignature checks the HMAC-SHA256 over the raw body.
+// VerifySignature checks the HMAC-SHA256 signature.
 func (s *Service) VerifySignature(raw []byte, signature string) error {
 	return crypto.VerifyRazorpaySignature(raw, signature, s.webhookSecret)
 }
-
-
-// Webhook
 
 
 // RazorpayWebhookEvent is the subset of fields we care about from a webhook.
@@ -169,8 +160,7 @@ type RazorpayWebhookEvent struct {
 	} `json:"payload"`
 }
 
-// HandleWebhook processes one verified webhook. Two-layer idempotency:
-// Redis SETNX (fast, lossy) + payment_events unique constraint (durable).
+// HandleWebhook processes one verified webhook.
 func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 	var evt RazorpayWebhookEvent
 	if err := json.Unmarshal(raw, &evt); err != nil {
@@ -180,7 +170,7 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 		return errs.Invalid("MALFORMED_EVENT", "event has no id")
 	}
 
-	// fast path — absorbs retry storms without touching postgres
+	// Redis SETNX for fast dedup
 	lockKey := "idem:wh:" + evt.ID
 	acquired, err := s.redis.SetNX(ctx, lockKey, "1", 24*time.Hour)
 	if err != nil {
@@ -213,7 +203,7 @@ func (s *Service) HandleWebhook(ctx context.Context, raw []byte) error {
 		}
 	})
 
-	// release the redis key on failure so the provider's retry isn't swallowed
+	// release the redis key on failure so retries aren't swallowed
 	if err != nil && !errors.Is(err, ErrDuplicateEvent) {
 		if _, delErr := s.redis.Del(ctx, lockKey); delErr != nil {
 			s.log.Warn("failed to release webhook lock", "event_id", evt.ID, "error", delErr)

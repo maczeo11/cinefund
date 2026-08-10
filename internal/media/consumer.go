@@ -57,7 +57,7 @@ func (c *Consumer) Run(ctx context.Context) error {
 	}
 }
 
-// handleUploaded enqueues a transcode job (idempotent via unique constraint).
+// handleUploaded enqueues a transcode job.
 func (c *Consumer) handleUploaded(ctx context.Context, rec *kgo.Record, evt event) {
 	var p struct {
 		AssetID string `json:"asset_id"`

@@ -1,5 +1,4 @@
-// cmd/seed inserts deterministic dev data: a demo user, a live campaign and a
-// couple of tiers. Idempotent - safe to run repeatedly.
+// cmd/seed inserts deterministic dev data.
 package main
 
 import (

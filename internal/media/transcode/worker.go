@@ -253,7 +253,7 @@ func (w *Worker) heartbeat(ctx context.Context, job *Job, state *jobState, onSto
 
 // runJob: probe → validate → ladder → encode each rung → upload → write master last.
 func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
-	// ffmpeg reads the presigned URL over HTTP (range requests)
+	// ffmpeg reads the presigned URL over HTTP
 	srcURL, err := w.store.PresignedGet(ctx, job.StorageKey, w.cfg.JobTimeout+10*time.Minute)
 	if err != nil {
 		return fmt.Errorf("presign source: %w", err)
@@ -280,7 +280,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 	state.tasks = NewTasks(ladder)
 	state.mu.Unlock()
 
-	// temp dir per job, always cleaned up
+	// temp dir per job
 	dir, err := os.MkdirTemp(w.cfg.WorkDir, "cf-"+job.ID.String()+"-")
 	if err != nil {
 		if !os.IsNotExist(err) {
@@ -295,7 +295,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 	}
 	defer os.RemoveAll(dir)
 
-	// encode all rungs concurrently, bounded by the semaphore
+	// encode all rungs concurrently
 	var (
 		wg       sync.WaitGroup
 		mu       sync.Mutex
@@ -336,7 +336,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 		return err
 	}
 
-	// upload renditions before master — master is the commit point
+	// upload renditions before master
 	renditions := make([]renditionMeta, 0, len(ladder))
 	for _, rung := range ladder {
 		prefix := RenditionPrefix(job.AssetID.String(), job.PipelineVersion, rung.Name)

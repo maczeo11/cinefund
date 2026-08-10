@@ -121,8 +121,7 @@ func (s *PGStore) Claim(ctx context.Context, n int) ([]Row, error) {
 	return out, rows.Err()
 }
 
-// MarkPublished is idempotent: publishing the same row twice is harmless, and
-// the WHERE keeps a replica from un-publishing someone else's row.
+// MarkPublished marks a row as published.
 func (s *PGStore) MarkPublished(ctx context.Context, id int64) error {
 	_, err := s.Pool.Exec(ctx, `
 		UPDATE outbox SET published_at = now()

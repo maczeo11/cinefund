@@ -23,9 +23,7 @@ func NewHandler(store *UploadStore, jobRepo *JobRepo) *Handler {
 	return &Handler{store: store, jobRepo: jobRepo, ttl: 15 * time.Minute}
 }
 
-// Presign handles POST /uploads. It creates the asset row and returns a
-// presigned PUT URL the browser uploads to directly - the API never touches the
-// video bytes.
+// Presign handles POST /uploads.
 func (h *Handler) Presign(c *gin.Context) {
 	var body struct {
 		OwnerID     uuid.UUID  `json:"owner_id"`
@@ -57,8 +55,7 @@ func (h *Handler) Presign(c *gin.Context) {
 	})
 }
 
-// Complete handles POST /uploads/:id/complete. The client calls this after the
-// bytes are in storage; it verifies the object exists and enqueues the transcode.
+// Complete handles POST /uploads/:id/complete.
 func (h *Handler) Complete(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {

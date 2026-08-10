@@ -6,7 +6,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// Status values match the pledges.status column exactly.
+// Status values match the pledges.status column.
 type Status string
 
 const (

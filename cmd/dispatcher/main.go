@@ -1,7 +1,4 @@
 // cmd/dispatcher moves outbox rows to Kafka.
-//
-// It is a separate process from the API so a Kafka outage does not slow down
-// request handling: events accumulate in the outbox and this binary drains them.
 package main
 
 import (
