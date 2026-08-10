@@ -93,6 +93,7 @@ func main() {
 
 	// real razorpay when creds are set, otherwise the in-memory fake
 	var gw gateway.Gateway
+	
 	if cfg.UseFakeGateway() {
 		log.Info("using fake payment gateway")
 		gw = fake.New()
