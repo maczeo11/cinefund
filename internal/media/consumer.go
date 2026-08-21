@@ -52,7 +52,9 @@ func (c *Consumer) Run(ctx context.Context) error {
 			if evt.EventType == "media.uploaded" {
 				c.handleUploaded(ctx, rec, evt)
 			}
-			c.client.CommitRecords(ctx, rec)
+			if err := c.client.CommitRecords(ctx, rec); err != nil {
+				c.log.Warn("commit failed", "error", err)
+			}
 		})
 	}
 }

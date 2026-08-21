@@ -39,7 +39,7 @@ func (e *Error) Error() string {
 
 func (e *Error) Unwrap() error { return e.cause }
 
-func (e *Error) WithDetails(d any) *Error { e.Details = d; return e }
+func (e *Error) WithDetails(d any) *Error   { e.Details = d; return e }
 func (e *Error) WithCause(err error) *Error { e.cause = err; return e }
 
 func newf(k Kind, code, format string, args ...any) *Error {

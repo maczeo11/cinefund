@@ -93,10 +93,14 @@ func main() {
 
 	// real razorpay when creds are set, otherwise the in-memory fake
 	var gw gateway.Gateway
-	
+	secrets := pledge.Secrets{
+		KeySecret:     cfg.Razorpay.KeySecret,
+		WebhookSecret: cfg.Razorpay.WebhookSecret,
+	}
 	if cfg.UseFakeGateway() {
 		log.Info("using fake payment gateway")
 		gw = fake.New()
+		secrets.KeySecret = "" // nothing signs the fake's checkout callback
 	} else {
 		gw = razorpay.New(cfg.Razorpay.KeyID, cfg.Razorpay.KeySecret, "")
 	}
@@ -108,7 +112,7 @@ func main() {
 		pledge.NewLedger(),
 		gw,
 		redisAdapter{rdb},
-		cfg.Razorpay.WebhookSecret,
+		secrets,
 		log,
 	)
 
@@ -129,15 +133,24 @@ func main() {
 
 	api := r.Group("/api/v1")
 	{
+		// public config for frontend (razorpay key id, etc.)
+		api.GET("/config", func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{
+				"razorpay_key_id": cfg.Razorpay.KeyID,
+			})
+		})
+
 		campH := campaign.NewHandler(campaignStore)
 		api.GET("/campaigns", campH.List)
 		api.POST("/campaigns", campH.Create)
 		api.GET("/campaigns/:id", campH.Get)
 		api.POST("/campaigns/:id/publish", campH.SetLive)
+		api.GET("/campaigns/:id/tiers", campH.Tiers)
 		api.POST("/campaigns/:id/tiers", campH.AddTier)
 
 		pledgeH := pledge.NewHandler(pledgeSvc)
 		api.POST("/campaigns/:id/pledges", pledgeH.CreatePledge)
+		api.POST("/pledges/:id/confirm", pledgeH.Confirm)
 
 		mediaH := media.NewHandler(uploadStore, media.NewJobRepo(pg))
 		api.POST("/uploads", mediaH.Presign)

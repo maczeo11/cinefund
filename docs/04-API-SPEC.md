@@ -307,18 +307,50 @@ you serialise your entire checkout flow under load. Commit the pledge insert
 first, then create the order, then update. A pledge with no order id is cleaned
 up by the reconciliation sweep.
 
+### `POST /api/v1/pledges/{id}/confirm`
+
+The browser reports back here when Razorpay Checkout's `handler` fires, passing
+the three fields Checkout hands it:
+
+```json
+{
+  "razorpay_order_id": "order_NxYz...",
+  "razorpay_payment_id": "pay_NxYz...",
+  "razorpay_signature": "9f86d081..."
+}
+```
+
+Returns `{"id": "...", "status": "CAPTURED"}`.
+
+The signature is HMAC-SHA256 over `order_id|payment_id` keyed with the **API key
+secret**, not the webhook secret. Getting those two confused fails in a way that
+looks exactly like a forged request.
+
+Nothing here is trusted for money. The signature only proves the caller talked
+to Checkout; the amount, fee and payment id are read back from
+`FetchPayments(order_id)` and the pledge is settled by the same code the webhook
+runs. Confirming a pledge twice, or confirming one the webhook already handled,
+is a no-op — the status check in `applyCapture` is the guard.
+
+If the provider reports the payment as authorized but not yet captured, the
+endpoint returns the unchanged status and leaves the webhook to finish.
+
+This exists because webhooks cannot reach a developer machine at all, and
+because in production they can lag long enough that a backer watches the total
+sit still after paying. The webhook remains the source of truth and the only
+path that runs unattended.
+
 ### Other pledge endpoints
 
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
-| GET | `/pledges/{id}` | owner | poll target after checkout; returns live status from Postgres |
+| GET | `/pledges/{id}` | owner | poll target when confirm returns a non-final status |
 | GET | `/me/pledges` | user | paginated history with campaign summaries |
 | POST | `/pledges/{id}/cancel` | owner | rule F9: `LIVE` and >24h to deadline; → `REFUND_PENDING` |
 
-`GET /pledges/{id}` is the endpoint the browser polls after Razorpay Checkout
-returns. Poll with backoff (1s, 2s, 4s, cap 5s, give up at 60s) and show
-"we'll email you when it clears" rather than spinning forever — the webhook can
-legitimately take a few seconds.
+If `confirm` comes back with anything other than `CAPTURED`, poll
+`GET /pledges/{id}` with backoff (1s, 2s, 4s, cap 5s, give up at 60s) and show
+"we'll email you when it clears" rather than spinning forever.
 
 ---
 

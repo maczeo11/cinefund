@@ -85,6 +85,7 @@ func (c *Config) applyDefaults() {
 }
 
 var ErrJobStolen = errors.New("job stolen by another worker")
+
 type Worker struct {
 	cfg    Config
 	jobs   JobStore
@@ -286,14 +287,14 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("temp dir: %w", err)
 		}
-		if mkErr := os.MkdirAll(w.cfg.WorkDir, 0o755); mkErr != nil {
+		if mkErr := os.MkdirAll(w.cfg.WorkDir, 0o750); mkErr != nil { //nolint:gosec // work dir needs group read for ffmpeg child
 			return fmt.Errorf("create work dir: %w", mkErr)
 		}
 		if dir, err = os.MkdirTemp(w.cfg.WorkDir, "cf-"+job.ID.String()+"-"); err != nil {
 			return fmt.Errorf("temp dir: %w", err)
 		}
 	}
-	defer os.RemoveAll(dir)
+	defer func() { _ = os.RemoveAll(dir) }()
 
 	// encode all rungs concurrently
 	var (
@@ -368,7 +369,7 @@ func (w *Worker) runJob(ctx context.Context, job *Job, state *jobState) error {
 
 	// master playlist last
 	masterPath := filepath.Join(dir, "master.m3u8")
-	if err := os.WriteFile(masterPath, BuildMasterPlaylist(ladder, dispW, dispH), 0o644); err != nil {
+	if err := os.WriteFile(masterPath, BuildMasterPlaylist(ladder, dispW, dispH), 0o600); err != nil { //nolint:gosec // master playlist is uploaded then removed
 		return fmt.Errorf("write master: %w", err)
 	}
 	masterKey := MasterKey(job.AssetID.String(), job.PipelineVersion)
@@ -412,11 +413,11 @@ func (w *Worker) uploadDir(ctx context.Context, localDir, keyPrefix string) erro
 }
 
 func (w *Worker) uploadFile(ctx context.Context, localPath, key, contentType string) error {
-	f, err := os.Open(localPath)
+	f, err := os.Open(filepath.Clean(localPath)) //nolint:gosec // path is internal temp dir, not user input
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	st, err := f.Stat()
 	if err != nil {

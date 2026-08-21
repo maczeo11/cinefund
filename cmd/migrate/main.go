@@ -40,7 +40,7 @@ func main() {
 	if err != nil {
 		fatal("connect: %v", err)
 	}
-	defer conn.Close(context.Background())
+	defer func() { _ = conn.Close(context.Background()) }()
 
 	if err := ensureTable(ctx, conn); err != nil {
 		fatal("create schema_migrations: %v", err)

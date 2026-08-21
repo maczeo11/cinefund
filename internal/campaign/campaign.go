@@ -14,6 +14,7 @@ type Campaign struct {
 	CreatorID    uuid.UUID  `json:"creator_id"`
 	Title        string     `json:"title"`
 	Tagline      string     `json:"tagline"`
+	Synopsis     string     `json:"synopsis"`
 	Category     string     `json:"category"`
 	GoalAmount   int64      `json:"goal_amount"`
 	RaisedAmount int64      `json:"raised_amount"`
@@ -26,6 +27,7 @@ type Tier struct {
 	ID            uuid.UUID `json:"id"`
 	CampaignID    uuid.UUID `json:"campaign_id"`
 	Title         string    `json:"title"`
+	Description   string    `json:"description"`
 	MinAmount     int64     `json:"min_amount"`
 	QuantityLimit *int      `json:"quantity_limit"`
 	ClaimedCount  int       `json:"claimed_count"`
@@ -72,17 +74,17 @@ func (s *Store) Create(ctx context.Context, in NewCampaign) (*Campaign, error) {
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Campaign, error) {
 	var c Campaign
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, creator_id, title, tagline, category,
+		SELECT id, creator_id, title, tagline, COALESCE(synopsis, ''), category,
 		       goal_amount, raised_amount, backer_count, status, deadline
 		  FROM campaigns WHERE id = $1`, id).
-		Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Category,
+		Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Synopsis, &c.Category,
 			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline)
 	return &c, err
 }
 
 func (s *Store) List(ctx context.Context) ([]Campaign, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, creator_id, title, tagline, category,
+		SELECT id, creator_id, title, tagline, COALESCE(synopsis, ''), category,
 		       goal_amount, raised_amount, backer_count, status, deadline
 		  FROM campaigns
 		 ORDER BY created_at DESC
@@ -95,7 +97,7 @@ func (s *Store) List(ctx context.Context) ([]Campaign, error) {
 	var out []Campaign
 	for rows.Next() {
 		var c Campaign
-		if err := rows.Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Category,
+		if err := rows.Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Synopsis, &c.Category,
 			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline); err != nil {
 			return nil, err
 		}
@@ -120,16 +122,16 @@ func (s *Store) AddTier(ctx context.Context, in NewTier) (*Tier, error) {
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO reward_tiers (id, campaign_id, title, description, min_amount, quantity_limit)
 		VALUES ($1,$2,$3,$4,$5,$6)
-		RETURNING id, campaign_id, title, min_amount, quantity_limit, claimed_count`,
+		RETURNING id, campaign_id, title, COALESCE(description, ''), min_amount, quantity_limit, claimed_count`,
 		uuid.New(), in.CampaignID, in.Title, in.Description, in.MinAmount, in.QuantityLimit).
-		Scan(&t.ID, &t.CampaignID, &t.Title, &t.MinAmount, &t.QuantityLimit, &t.ClaimedCount)
+		Scan(&t.ID, &t.CampaignID, &t.Title, &t.Description, &t.MinAmount, &t.QuantityLimit, &t.ClaimedCount)
 	return &t, err
 }
 
 func (s *Store) Tiers(ctx context.Context, campaignID uuid.UUID) ([]Tier, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, campaign_id, title, min_amount, quantity_limit, claimed_count
-		  FROM reward_tiers WHERE campaign_id = $1 ORDER BY sort_order, min_amount`, campaignID)
+		SELECT id, campaign_id, title, COALESCE(description, ''), min_amount, quantity_limit, claimed_count
+		  FROM reward_tiers WHERE campaign_id = $1 ORDER BY min_amount ASC`, campaignID)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +140,7 @@ func (s *Store) Tiers(ctx context.Context, campaignID uuid.UUID) ([]Tier, error)
 	var out []Tier
 	for rows.Next() {
 		var t Tier
-		if err := rows.Scan(&t.ID, &t.CampaignID, &t.Title, &t.MinAmount, &t.QuantityLimit, &t.ClaimedCount); err != nil {
+		if err := rows.Scan(&t.ID, &t.CampaignID, &t.Title, &t.Description, &t.MinAmount, &t.QuantityLimit, &t.ClaimedCount); err != nil {
 			return nil, err
 		}
 		out = append(out, t)

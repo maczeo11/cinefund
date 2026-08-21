@@ -47,7 +47,7 @@ type Queries interface {
 	GetTierForUpdate(ctx context.Context, id uuid.UUID) (*Tier, error)
 	MarkPledgeCaptured(ctx context.Context, id uuid.UUID, paymentID string, at time.Time) error
 	SetPledgeStatus(ctx context.Context, id uuid.UUID, s Status) error
-	IncrementCampaignRaised(ctx context.Context, campaignID uuid.UUID, amount int64) error
+	IncrementCampaignRaised(ctx context.Context, p *Pledge) error
 	IncrementTierClaimed(ctx context.Context, tierID uuid.UUID) error
 	InsertPaymentEvent(ctx context.Context, evt PaymentEvent) error
 	InsertLedgerTransaction(ctx context.Context, t LedgerTxn) (uuid.UUID, error)

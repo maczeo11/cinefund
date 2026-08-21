@@ -88,9 +88,7 @@ func (p Probe) DisplayDimensions() (int, int) {
 	return DisplayDimensions(p.Width, p.Height, p.Rotation)
 }
 
-
 // ffprobe output shapes
-
 
 type ffprobeOutput struct {
 	Streams []ffprobeStream `json:"streams"`
@@ -131,7 +129,7 @@ func NewProber(path string) *Prober {
 
 // Run probes the input (usually a presigned URL).
 func (p *Prober) Run(ctx context.Context, input string) (*Probe, error) {
-	cmd := exec.CommandContext(ctx, p.Path, ProbeArgs(input)...)
+	cmd := exec.CommandContext(ctx, p.Path, ProbeArgs(input)...) //nolint:gosec // input is a presigned URL from our object store, not user shell input
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 
@@ -227,9 +225,7 @@ func parseFrameRate(s string) float64 {
 	return n / d
 }
 
-
 // Rejection rules
-
 
 // Validate checks the probe result against our rules and returns a RejectError
 // for anything that shouldn't be retried.

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 
 	"github.com/maczeo11/cinefund/internal/campaign"
 	"github.com/maczeo11/cinefund/internal/platform/config"
@@ -33,17 +32,11 @@ func main() {
 }
 
 func seed(ctx context.Context, pool *postgres.Pool) error {
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
 	// Users first; pledges and campaigns reference them.
-	if err := upsertUser(ctx, tx, creatorID, "creator@cinefund.dev", "Ava"); err != nil {
+	if err := upsertUser(ctx, pool, creatorID, "creator@cinefund.dev", "Ava"); err != nil {
 		return err
 	}
-	if err := upsertUser(ctx, tx, backerID, "backer@cinefund.dev", "Ravi"); err != nil {
+	if err := upsertUser(ctx, pool, backerID, "backer@cinefund.dev", "Ravi"); err != nil {
 		return err
 	}
 
@@ -64,7 +57,7 @@ func seed(ctx context.Context, pool *postgres.Pool) error {
 	}
 	// Give the demo campaign a real deadline rather than the 30-day default so
 	// the pledge flow behaves predictably.
-	if _, err := tx.Exec(ctx, `
+	if _, err := pool.Exec(ctx, `
 		UPDATE campaigns SET deadline = $2 WHERE id = $1`,
 		c.ID, time.Now().Add(45*24*time.Hour)); err != nil {
 		return err
@@ -85,13 +78,13 @@ func seed(ctx context.Context, pool *postgres.Pool) error {
 		return err
 	}
 
-	return tx.Commit(ctx)
+	return nil
 }
 
-func upsertUser(ctx context.Context, tx pgx.Tx, id uuid.UUID, email, name string) error {
-	_, err := tx.Exec(ctx, `
+func upsertUser(ctx context.Context, pool *postgres.Pool, id uuid.UUID, email, name string) error {
+	_, err := pool.Exec(ctx, `
 		INSERT INTO users (id, email, password_hash, display_name)
-		VALUES ($1,$2,'','$3')
+		VALUES ($1,$2,'',$3)
 		ON CONFLICT (id) DO NOTHING`, id, email, name)
 	return err
 }

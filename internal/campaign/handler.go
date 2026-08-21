@@ -1,6 +1,8 @@
 package campaign
 
 import (
+	"errors"
+
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -47,7 +49,7 @@ func (h *Handler) Get(c *gin.Context) {
 		return
 	}
 	campaign, err := h.store.Get(c.Request.Context(), id)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		httpx.Abort(c, errs.NotFound("CAMPAIGN_NOT_FOUND", "campaign not found"))
 		return
 	}
@@ -88,4 +90,21 @@ func (h *Handler) AddTier(c *gin.Context) {
 		return
 	}
 	httpx.Created(c, tier)
+}
+
+func (h *Handler) Tiers(c *gin.Context) {
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpx.Abort(c, errs.Invalid("INVALID_ID", "campaign id is not a uuid"))
+		return
+	}
+	tiers, err := h.store.Tiers(c.Request.Context(), id)
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	if tiers == nil {
+		tiers = []Tier{}
+	}
+	httpx.OK(c, tiers)
 }

@@ -60,6 +60,36 @@ func (h *Handler) CreatePledge(c *gin.Context) {
 	})
 }
 
+// Confirm settles a pledge from Razorpay Checkout's browser callback.
+func (h *Handler) Confirm(c *gin.Context) {
+	pledgeID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		httpx.Abort(c, errs.Invalid("INVALID_ID", "pledge id is not a uuid"))
+		return
+	}
+
+	var body struct {
+		OrderID   string `json:"razorpay_order_id"`
+		PaymentID string `json:"razorpay_payment_id"`
+		Signature string `json:"razorpay_signature"`
+	}
+	if !httpx.BindJSON(c, &body) {
+		return
+	}
+
+	status, err := h.svc.ConfirmPayment(c.Request.Context(), ConfirmInput{
+		PledgeID:  pledgeID,
+		OrderID:   body.OrderID,
+		PaymentID: body.PaymentID,
+		Signature: body.Signature,
+	})
+	if err != nil {
+		_ = c.Error(err)
+		return
+	}
+	httpx.OK(c, gin.H{"id": pledgeID, "status": status})
+}
+
 func (h *Handler) Webhook(c *gin.Context) {
 	raw, err := c.GetRawData()
 	if err != nil {
@@ -75,7 +105,7 @@ func (h *Handler) Webhook(c *gin.Context) {
 
 	err = h.svc.HandleWebhook(c.Request.Context(), raw)
 	if errors.Is(err, ErrDuplicateEvent) {
-			httpx.OK(c, gin.H{"status": "ok"})
+		httpx.OK(c, gin.H{"status": "ok"})
 		return
 	}
 	if err != nil {

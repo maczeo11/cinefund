@@ -39,7 +39,7 @@ type Kafka struct {
 }
 
 type S3 struct {
-	Endpoint string `env:"S3_ENDPOINT" envDefault:"http://localhost:9000"`
+	Endpoint        string `env:"S3_ENDPOINT" envDefault:"http://localhost:9000"`
 	PublicEndpoint  string `env:"S3_PUBLIC_ENDPOINT" envDefault:"http://localhost:9000"`
 	AccessKey       string `env:"S3_ACCESS_KEY,required"`
 	SecretKey       string `env:"S3_SECRET_KEY,required"`

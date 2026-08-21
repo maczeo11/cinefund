@@ -11,11 +11,11 @@ var ErrOrderNotFound = errors.New("order not found")
 
 // OrderRequest is what the service sends to open a checkout order.
 type OrderRequest struct {
-	Amount          int64
-	Currency        string
-	Receipt         string
-	Notes           map[string]string
-	PaymentCapture  int
+	Amount         int64
+	Currency       string
+	Receipt        string
+	Notes          map[string]string
+	PaymentCapture int
 }
 
 // Order is a provider order.

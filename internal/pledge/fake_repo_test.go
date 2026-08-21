@@ -21,6 +21,9 @@ type fakeQueries struct {
 	tiers    map[uuid.UUID]*Tier
 	raised   map[uuid.UUID]int64
 
+	backers     map[string]bool // "campaign:backer" - emulates the distinct-backer count
+	backerCount map[uuid.UUID]int
+
 	// processed provider_event_ids - emulates uq_provider_event.
 	events   map[string]bool
 	balances map[string]int64 // ledger account kind -> balance
@@ -36,11 +39,22 @@ func newFakeQueries() *fakeQueries {
 		raised:   make(map[uuid.UUID]int64),
 		events:   make(map[string]bool),
 		balances: make(map[string]int64),
+
+		backers:     make(map[string]bool),
+		backerCount: make(map[uuid.UUID]int),
 	}
+}
+
+func (f *fakeQueries) Backers(id uuid.UUID) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.backerCount[id]
 }
 
 func (f *fakeQueries) seedCampaign(c *Campaign) { f.campaign[c.ID] = c }
 func (f *fakeQueries) seedTier(t *Tier)         { f.tiers[t.ID] = t }
+
+//nolint:unused // kept for future idempotency tests that seed a pre-existing pledge
 func (f *fakeQueries) seedPledge(p *Pledge) {
 	f.pledges[p.ID] = p
 	if p.ProviderOrderID != "" {
@@ -150,10 +164,15 @@ func (f *fakeQueries) SetPledgeStatus(_ context.Context, id uuid.UUID, s Status)
 	return nil
 }
 
-func (f *fakeQueries) IncrementCampaignRaised(_ context.Context, campaignID uuid.UUID, amount int64) error {
+func (f *fakeQueries) IncrementCampaignRaised(_ context.Context, p *Pledge) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.raised[campaignID] += amount
+	f.raised[p.CampaignID] += p.Amount
+	key := p.CampaignID.String() + ":" + p.BackerID.String()
+	if !f.backers[key] {
+		f.backers[key] = true
+		f.backerCount[p.CampaignID]++
+	}
 	return nil
 }
 

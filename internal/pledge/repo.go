@@ -107,10 +107,21 @@ func (q *pgQueries) SetPledgeStatus(ctx context.Context, id uuid.UUID, s Status)
 	return err
 }
 
-func (q *pgQueries) IncrementCampaignRaised(ctx context.Context, campaignID uuid.UUID, amount int64) error {
+// IncrementCampaignRaised counts backers, not pledges: someone who backs the
+// same campaign twice is one backer. MarkPledgeCaptured has already run in this
+// tx, so the pledge being applied is excluded explicitly.
+func (q *pgQueries) IncrementCampaignRaised(ctx context.Context, p *Pledge) error {
 	_, err := q.tx.Exec(ctx, `
-		UPDATE campaigns SET raised_amount = raised_amount + $2, backer_count = backer_count + 1
-		 WHERE id = $1`, campaignID, amount)
+		UPDATE campaigns c
+		   SET raised_amount = c.raised_amount + $2,
+		       backer_count  = c.backer_count + CASE WHEN EXISTS (
+		           SELECT 1 FROM pledges prior
+		            WHERE prior.campaign_id = $1
+		              AND prior.backer_id = $3
+		              AND prior.id <> $4
+		              AND prior.status IN ('CAPTURED','SETTLED')
+		       ) THEN 0 ELSE 1 END
+		 WHERE c.id = $1`, p.CampaignID, p.Amount, p.BackerID, p.ID)
 	return err
 }
 

@@ -86,7 +86,8 @@ func TestWebhook_PostgresOutage_RetryAppliedOnce(t *testing.T) {
 	secret := "integration-test-secret"
 
 	rd := &redisAdapter{c: rdb}
-	svc := pledge.NewService(repo, repo, pledge.NewLedger(), gw, rd, secret, log)
+	svc := pledge.NewService(repo, repo, pledge.NewLedger(), gw, rd,
+		pledge.Secrets{WebhookSecret: secret}, log)
 
 	backerID := uuid.New()
 	p, err := svc.CreatePledge(context.Background(), pledge.CreateInput{

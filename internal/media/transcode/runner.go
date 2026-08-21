@@ -33,7 +33,7 @@ func NewRunner(ffmpegPath string) *Runner {
 // segment it is on and close its files cleanly. WaitDelay is the escalation:
 // without it a wedged FFmpeg that ignores SIGTERM blocks shutdown forever.
 func (r *Runner) command(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, r.FFmpegPath, args...)
+	cmd := exec.CommandContext(ctx, r.FFmpegPath, args...) //nolint:gosec // args are constructed internally (RenditionArgs/PosterArgs), not user shell input
 	cmd.Cancel = func() error { return signalTerminate(cmd) }
 	cmd.WaitDelay = r.KillGrace
 	return cmd
@@ -48,7 +48,7 @@ func (r *Runner) RunRendition(
 	totalMicros int64,
 	onProgress func(Progress),
 ) error {
-	if err := os.MkdirAll(outDir, 0o755); err != nil {
+	if err := os.MkdirAll(outDir, 0o750); err != nil { //nolint:gosec // outDir is internal temp work dir; 0750 is sufficient
 		return fmt.Errorf("create rendition dir: %w", err)
 	}
 
@@ -98,7 +98,7 @@ func (r *Runner) RunRendition(
 // ExtractPoster writes a poster frame. Failure is not fatal to a job: a film
 // without a thumbnail is still watchable, so callers log and continue.
 func (r *Runner) ExtractPoster(ctx context.Context, input string, durationSecs float64, outPath string) error {
-	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o750); err != nil { //nolint:gosec // poster dir is internal temp work dir
 		return err
 	}
 	cmd := r.command(ctx, PosterArgs(input, durationSecs, outPath)...)

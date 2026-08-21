@@ -20,7 +20,8 @@ const testSecret = "test-webhook-secret"
 func testService(fq *fakeQueries) (*Service, *fake.Fake, *fakeRedis) {
 	gw := fake.New()
 	rd := newFakeRedis()
-	svc := NewService(fq, fq, NewLedger(), gw, rd, testSecret, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := NewService(fq, fq, NewLedger(), gw, rd, Secrets{WebhookSecret: testSecret},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return svc, gw, rd
 }
 func liveCampaign(creator uuid.UUID, deadline time.Time) *Campaign {
@@ -350,5 +351,117 @@ func TestFetchPaymentsUnknownOrder(t *testing.T) {
 	gw := fake.New()
 	if _, err := gw.FetchPayments(context.Background(), "order_missing"); !errors.Is(err, gateway.ErrOrderNotFound) {
 		t.Fatalf("expected ErrOrderNotFound, got %v", err)
+	}
+}
+
+func TestConfirmPayment_CapturesAndCreditsCampaign(t *testing.T) {
+	fq := newFakeQueries()
+	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
+	fq.seedCampaign(c)
+	svc, _, _ := testService(fq)
+
+	p, err := svc.CreatePledge(context.Background(), CreateInput{
+		CampaignID: c.ID, BackerID: uuid.New(), Amount: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePledge failed: %v", err)
+	}
+
+	status, err := svc.ConfirmPayment(context.Background(), ConfirmInput{
+		PledgeID: p.ID, OrderID: p.ProviderOrderID,
+	})
+	if err != nil {
+		t.Fatalf("ConfirmPayment failed: %v", err)
+	}
+	if status != StatusCaptured {
+		t.Fatalf("status = %s, want CAPTURED", status)
+	}
+	if got := fq.Raised(c.ID); got != 100000 {
+		t.Fatalf("raised = %d, want 100000", got)
+	}
+	if got := fq.OutboxLen(); got != 1 {
+		t.Fatalf("outbox rows = %d, want 1", got)
+	}
+}
+
+func TestConfirmPayment_IsIdempotent(t *testing.T) {
+	fq := newFakeQueries()
+	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
+	fq.seedCampaign(c)
+	svc, _, _ := testService(fq)
+
+	p, err := svc.CreatePledge(context.Background(), CreateInput{
+		CampaignID: c.ID, BackerID: uuid.New(), Amount: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePledge failed: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := svc.ConfirmPayment(context.Background(), ConfirmInput{
+			PledgeID: p.ID, OrderID: p.ProviderOrderID,
+		}); err != nil {
+			t.Fatalf("confirm %d failed: %v", i, err)
+		}
+	}
+	if got := fq.Raised(c.ID); got != 100000 {
+		t.Fatalf("raised = %d after three confirms, want 100000", got)
+	}
+	if got := fq.Backers(c.ID); got != 1 {
+		t.Fatalf("backers = %d, want 1", got)
+	}
+}
+
+func TestConfirmPayment_RejectsOrderFromAnotherPledge(t *testing.T) {
+	fq := newFakeQueries()
+	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
+	fq.seedCampaign(c)
+	svc, _, _ := testService(fq)
+
+	mine, err := svc.CreatePledge(context.Background(), CreateInput{
+		CampaignID: c.ID, BackerID: uuid.New(), Amount: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePledge failed: %v", err)
+	}
+	theirs, err := svc.CreatePledge(context.Background(), CreateInput{
+		CampaignID: c.ID, BackerID: uuid.New(), Amount: 500000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePledge failed: %v", err)
+	}
+
+	if _, err := svc.ConfirmPayment(context.Background(), ConfirmInput{
+		PledgeID: mine.ID, OrderID: theirs.ProviderOrderID,
+	}); err == nil {
+		t.Fatal("expected a mismatch error when confirming another pledge's order")
+	}
+	if got := fq.Raised(c.ID); got != 0 {
+		t.Fatalf("raised = %d, want 0", got)
+	}
+}
+
+func TestConfirmPayment_RejectsForgedCheckoutSignature(t *testing.T) {
+	fq := newFakeQueries()
+	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
+	fq.seedCampaign(c)
+	svc := NewService(fq, fq, NewLedger(), fake.New(), newFakeRedis(),
+		Secrets{KeySecret: "live-key-secret", WebhookSecret: testSecret},
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	p, err := svc.CreatePledge(context.Background(), CreateInput{
+		CampaignID: c.ID, BackerID: uuid.New(), Amount: 100000,
+	})
+	if err != nil {
+		t.Fatalf("CreatePledge failed: %v", err)
+	}
+
+	if _, err := svc.ConfirmPayment(context.Background(), ConfirmInput{
+		PledgeID: p.ID, OrderID: p.ProviderOrderID, PaymentID: "pay_x", Signature: "deadbeef",
+	}); err == nil {
+		t.Fatal("a forged checkout signature must be rejected")
+	}
+	if got := fq.Raised(c.ID); got != 0 {
+		t.Fatalf("raised = %d, want 0", got)
 	}
 }
