@@ -29,6 +29,9 @@ coverage.*
 *.webm
 !testdata/sample_*.mp4
 !testdata/sample_*.mov
+# Allow TypeScript source (web) — .ts here is MPEG-TS for HLS, not TypeScript
+!web/**/*.ts
+!web/**/*.tsx
 
 # Local scratch
 /tmp/

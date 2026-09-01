@@ -1,0 +1,27 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Preserve CineFund editorial palette — Tailwind extended colors map to same vars */
+@layer base {
+  :root {
+    --ink: #0b0b0c;
+    --ink-raised: #101011;
+    --paper: #ece9e4;
+    --paper-dim: #8e8a83;
+    --paper-faint: #5d5a55;
+    --rule: rgba(236, 233, 228, 0.14);
+    --rule-soft: rgba(236, 233, 228, 0.07);
+    --accent: #c8553d;
+  }
+}
+
+/* Tailwind utilities for JD demo — keep App.css as editorial base, add Tailwind on top */
+@layer utilities {
+  .tw-card {
+    @apply bg-[#101011] border border-white/10 rounded-lg p-6;
+  }
+  .tw-badge {
+    @apply inline-flex items-center px-2 py-1 rounded bg-accent/20 text-accent text-xs font-medium;
+  }
+}

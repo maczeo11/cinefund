@@ -26,7 +26,7 @@ services:
       timeout: 3s
       retries: 10
 
-  redis:
+   redis:
     image: redis:7-alpine
     command: ["redis-server", "--appendonly", "no"]
     ports:
@@ -36,6 +36,23 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # PgBouncer — transaction pooling so 50 cuncurrent webhooks don't hold 50 pg conns.
+  # Use POSTGRES_DSN=postgres://cinefund:cinefund@localhost:6432/cinefund?sslmode=disable to route via it.
+  pgbouncer:
+    image: edoburu/pgbouncer:1.22.1
+    environment:
+      DATABASE_URL: "postgres://cinefund:cinefund@postgres:5432/cinefund"
+      POOL_MODE: "transaction"
+      MAX_CLIENT_CONN: "100"
+      DEFAULT_POOL_SIZE: "20"
+      RESERVE_POOL_SIZE: "5"
+      RESERVE_POOL_TIMEOUT: "2"
+    ports:
+      - "6432:6432"
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   # Kafka in KRaft mode - no ZooKeeper.
   kafka:

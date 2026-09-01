@@ -61,10 +61,11 @@ func main() {
 	}
 	r := gin.New()
 	r.Use(gin.Recovery())
+	// CORS — live backend only, allow all origins (Vercel preview + localhost) — frontend forwards to live data only, no mock
 	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{"http://localhost:5173", "http://localhost:3000"},
+		AllowAllOrigins: true,
 		AllowMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowHeaders: []string{"Content-Type"},
+		AllowHeaders: []string{"Content-Type", "Authorization"},
 	}))
 	r.Use(httpx.Middleware(log))
 

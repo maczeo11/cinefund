@@ -1,24 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCampaign, getTiers, getConfig, createPledge, confirmPledge } from '../api'
+import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
-import VideoPlayer from './VideoPlayer'
+import VideoPlayer from './VideoPlayer.tsx'
 
 const BACKER_ID = '00000000-0000-0000-0000-000000000002'
 const SAMPLE_HLS_STREAM = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
 
-// idle -> ordering -> paying -> confirming -> done
-function CampaignDetail({ id, onBack }) {
-  const [campaign, setCampaign] = useState(null)
-  const [tiers, setTiers] = useState([])
+type Props = { id: string; onBack: () => void }
+type Phase = 'idle' | 'ordering' | 'paying' | 'confirming' | 'done'
+
+export default function CampaignDetail({ id, onBack }: Props) {
+  const [campaign, setCampaign] = useState<Campaign | null>(null)
+  const [tiers, setTiers] = useState<Tier[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [checkoutKey, setCheckoutKey] = useState('')
 
-  const [tier, setTier] = useState(null)
+  const [tier, setTier] = useState<Tier | null>(null)
   const [amount, setAmount] = useState('')
   const [message, setMessage] = useState('')
-  const [phase, setPhase] = useState('idle')
-  const [pledgeError, setPledgeError] = useState(null)
+  const [phase, setPhase] = useState<Phase>('idle')
+  const [pledgeError, setPledgeError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     const [c, t] = await Promise.all([getCampaign(id), getTiers(id)])
@@ -29,12 +31,12 @@ function CampaignDetail({ id, onBack }) {
   useEffect(() => {
     setLoading(true)
     Promise.all([refresh(), getConfig()])
-      .then(([, cfg]) => setCheckoutKey(cfg.razorpay_key_id || ''))
-      .catch(err => setError(err.message))
+      .then(([, cfg]) => setCheckoutKey((cfg as { razorpay_key_id?: string }).razorpay_key_id || ''))
+      .catch(err => setError(`Live backend error: ${(err as Error).message} — check VITE_API_BASE`))
       .finally(() => setLoading(false))
   }, [id, refresh])
 
-  function selectTier(t) {
+  function selectTier(t: Tier) {
     if (tier?.id === t.id) {
       setTier(null)
       return
@@ -43,14 +45,11 @@ function CampaignDetail({ id, onBack }) {
     setAmount(String(t.min_amount / 100))
   }
 
-  // The server owns the outcome: it re-reads the payment from Razorpay and
-  // only then moves the pledge. We just report that checkout finished.
-  async function confirm(pledgeId, checkout) {
+  async function confirm(pledgeId: string, checkout: unknown) {
     setPhase('confirming')
     try {
       const result = await confirmPledge(pledgeId, checkout)
-      if (result.status !== 'CAPTURED') {
-        // authorized but not captured yet; the webhook will finish it
+      if ((result as { status: string }).status !== 'CAPTURED') {
         setPledgeError('Payment received. It will show up here once it settles.')
         setPhase('idle')
         return
@@ -61,21 +60,24 @@ function CampaignDetail({ id, onBack }) {
       setMessage('')
       setTier(null)
     } catch (err) {
-      setPledgeError(`Payment went through but we could not record it: ${err.message}`)
+      setPledgeError(`Payment went through but we could not record it: ${(err as Error).message}`)
       setPhase('idle')
     }
   }
 
-  function openCheckout(pledge) {
-    const rzp = new window.Razorpay({
+  function openCheckout(pledge: { id: string; order_id: string; amount: number; currency?: string }) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Rzp = (window as any).Razorpay
+    if (!Rzp) return
+    const rzp = new Rzp({
       key: checkoutKey,
       order_id: pledge.order_id,
       amount: pledge.amount,
       currency: pledge.currency || 'INR',
       name: 'CineFund',
-      description: campaign.title,
+      description: campaign?.title,
       theme: { color: '#c8553d', backdrop_color: '#0b0b0c' },
-      handler: response => confirm(pledge.id, response),
+      handler: (response: unknown) => confirm(pledge.id, response),
       modal: {
         ondismiss: () => {
           setPledgeError('Checkout closed before payment.')
@@ -83,7 +85,7 @@ function CampaignDetail({ id, onBack }) {
         },
       },
     })
-    rzp.on('payment.failed', res => {
+    rzp.on('payment.failed', (res: { error?: { description?: string } }) => {
       setPledgeError(res.error?.description || 'The payment was declined.')
       setPhase('idle')
     })
@@ -91,10 +93,9 @@ function CampaignDetail({ id, onBack }) {
     rzp.open()
   }
 
-  async function submit(e) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault()
     setPledgeError(null)
-
     const paise = toPaise(amount)
     if (!amount || !Number.isFinite(paise) || paise < 100) {
       setPledgeError('Enter an amount of ₹1 or more.')
@@ -104,7 +105,6 @@ function CampaignDetail({ id, onBack }) {
       setPledgeError(`${tier.title} starts at ${rupees(tier.min_amount)}.`)
       return
     }
-
     setPhase('ordering')
     try {
       const pledge = await createPledge(id, {
@@ -114,16 +114,13 @@ function CampaignDetail({ id, onBack }) {
         message,
         anonymous: false,
       })
-
-      if (checkoutKey && window.Razorpay) {
-        openCheckout(pledge)
+      if (checkoutKey && (window as unknown as { Razorpay?: unknown }).Razorpay) {
+        openCheckout(pledge as unknown as { id: string; order_id: string; amount: number })
       } else {
-        // no Razorpay key configured, so the API is on the fake gateway and
-        // has already marked the order paid
-        await confirm(pledge.id, { razorpay_order_id: pledge.order_id })
+        await confirm((pledge as { id: string }).id, { razorpay_order_id: (pledge as { order_id: string }).order_id })
       }
     } catch (err) {
-      setPledgeError(err.message)
+      setPledgeError((err as Error).message)
       setPhase('idle')
     }
   }
@@ -134,12 +131,18 @@ function CampaignDetail({ id, onBack }) {
 
   const days = daysLeft(campaign.deadline)
   const busy = phase !== 'idle' && phase !== 'done'
-  const busyLabel = { ordering: 'Opening checkout…', paying: 'Waiting for payment…', confirming: 'Recording…' }
+  const busyLabel: Record<Exclude<Phase, 'idle' | 'done'>, string> = {
+    ordering: 'Opening checkout…',
+    paying: 'Waiting for payment…',
+    confirming: 'Recording…',
+  }
 
   return (
     <div>
       <div style={{ paddingTop: 32 }}>
-        <button className="link" onClick={onBack}>← Index</button>
+        <button className="link" onClick={onBack}>
+          ← Index
+        </button>
       </div>
 
       <div className="detail">
@@ -157,6 +160,7 @@ function CampaignDetail({ id, onBack }) {
           <section className="section">
             <h2>Synopsis</h2>
             <p className="prose">{campaign.synopsis || campaign.tagline}</p>
+            <p className="mt-3 text-xs text-white/30">POST /api/v1/uploads → presigned S3 → FFmpeg HLS (GOP 48, 24fps, no upscale)</p>
           </section>
 
           {tiers.length > 0 && (
@@ -164,13 +168,13 @@ function CampaignDetail({ id, onBack }) {
               <h2>Rewards</h2>
               <ul className="tiers">
                 {tiers.map(t => {
-                  const soldOut = t.quantity_limit && t.claimed_count >= t.quantity_limit
+                  const soldOut = !!t.quantity_limit && t.claimed_count >= (t.quantity_limit as number)
                   return (
                     <li key={t.id} className="tier">
                       <button
                         className="tier-btn"
                         aria-pressed={tier?.id === t.id}
-                        disabled={soldOut}
+                        disabled={!!soldOut}
                         onClick={() => selectTier(t)}
                       >
                         <span className="tier-row">
@@ -179,11 +183,7 @@ function CampaignDetail({ id, onBack }) {
                         </span>
                         {t.description && <span className="tier-desc">{t.description}</span>}
                         <span className="tier-stock label">
-                          {soldOut
-                            ? 'Sold out'
-                            : t.quantity_limit
-                              ? `${t.claimed_count} of ${t.quantity_limit} claimed`
-                              : `${t.claimed_count} claimed`}
+                          {soldOut ? 'Sold out' : t.quantity_limit ? `${t.claimed_count} of ${t.quantity_limit} claimed` : `${t.claimed_count} claimed`}
                         </span>
                       </button>
                     </li>
@@ -194,16 +194,12 @@ function CampaignDetail({ id, onBack }) {
           )}
         </article>
 
-        <aside className="rail">
+        <aside className="rail tw-card !p-6">
           <div className="rail-sum num">{rupees(campaign.raised_amount)}</div>
-          <div className="rail-of num">
-            pledged of {rupees(campaign.goal_amount)}
-          </div>
-
+          <div className="rail-of num">pledged of {rupees(campaign.goal_amount)}</div>
           <div className="meter meter-tall rail-meter">
             <span style={{ width: `${percentOf(campaign.raised_amount, campaign.goal_amount)}%` }} />
           </div>
-
           <div className="rail-figures">
             <div className="rail-figure">
               <b className="num">{campaign.backer_count}</b>
@@ -221,37 +217,18 @@ function CampaignDetail({ id, onBack }) {
                 <label className="label" htmlFor="amount">
                   {tier ? `Backing ${tier.title}` : 'Pledge amount'}
                 </label>
-                <input
-                  id="amount"
-                  type="number"
-                  min="1"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  placeholder="₹500"
-                />
+                <input id="amount" type="number" min={1} value={amount} onChange={e => setAmount(e.target.value)} placeholder="₹500" />
               </div>
-
               <div className="field">
                 <label className="label" htmlFor="note">A note to the crew</label>
-                <input
-                  id="note"
-                  type="text"
-                  value={message}
-                  onChange={e => setMessage(e.target.value)}
-                  placeholder="Optional"
-                />
+                <input id="note" type="text" value={message} onChange={e => setMessage(e.target.value)} placeholder="Optional" />
               </div>
-
               {pledgeError && <p className="notice">{pledgeError}</p>}
-              {phase === 'done' && (
-                <p className="notice notice-done">
-                  Recorded. Thank you for backing this one.
-                </p>
-              )}
-
+              {phase === 'done' && <p className="notice notice-done">Recorded. Thank you for backing this one.</p>}
               <button type="submit" className="btn btn-wide" disabled={busy}>
-                {busy ? busyLabel[phase] : 'Back this film'}
+                {busy ? busyLabel[phase as Exclude<Phase, 'idle' | 'done'>] : 'Back this film'}
               </button>
+              <p className="text-[11px] text-white/30 text-center">HMAC + Redis SETNX + Postgres unique → 50-goroutine exactly-once</p>
             </form>
           )}
         </aside>
@@ -259,5 +236,3 @@ function CampaignDetail({ id, onBack }) {
     </div>
   )
 }
-
-export default CampaignDetail

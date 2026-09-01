@@ -69,11 +69,15 @@ func TestWebhook_PostgresOutage_RetryAppliedOnce(t *testing.T) {
 	// seed a campaign directly
 	campaignID := uuid.New()
 	creatorID := uuid.New()
+	// users table requires a row for creator_id FK — email must be unique per run
+	_, _ = pool.Exec(context.Background(), `
+		INSERT INTO users (id, email, password_hash, display_name)
+		VALUES ($1, $2, '', 'Integ Creator') ON CONFLICT DO NOTHING`, creatorID, "integ-creator-"+campaignID.String()[:8]+"@cinefund.dev")
 	_, err := pool.Exec(context.Background(), `
-		INSERT INTO campaigns (id, creator_id, title, status, deadline, goal_amount, raised_amount, backer_count)
-		VALUES ($1, $2, 'test campaign', 'LIVE', $3, 1000000, 0, 0)
+		INSERT INTO campaigns (id, creator_id, slug, title, tagline, synopsis, category, status, deadline, published_at, goal_amount, raised_amount, backer_count)
+		VALUES ($1, $2, $3, 'test campaign', 'integ test tagline', 'synopsis for integration test', 'DRAMA', 'LIVE', $4, now(), 1000000, 0, 0)
 		ON CONFLICT DO NOTHING`,
-		campaignID, creatorID, time.Now().Add(48*time.Hour))
+		campaignID, creatorID, "integ-"+campaignID.String()[:8], time.Now().Add(48*time.Hour))
 	if err != nil {
 		t.Fatalf("seed campaign: %v", err)
 	}
@@ -90,6 +94,9 @@ func TestWebhook_PostgresOutage_RetryAppliedOnce(t *testing.T) {
 		pledge.Secrets{WebhookSecret: secret}, log)
 
 	backerID := uuid.New()
+	_, _ = pool.Exec(context.Background(), `
+		INSERT INTO users (id, email, password_hash, display_name)
+		VALUES ($1, $2, '', 'Integ Backer') ON CONFLICT DO NOTHING`, backerID, "integ-backer-"+backerID.String()[:8]+"@cinefund.dev")
 	p, err := svc.CreatePledge(context.Background(), pledge.CreateInput{
 		CampaignID: campaignID,
 		BackerID:   backerID,
