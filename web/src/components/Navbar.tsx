@@ -1,26 +1,77 @@
+import { useState, useEffect } from 'react'
+import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
+
 type Props = {
   onHome: () => void
   onCreate: () => void
 }
 
 export default function Navbar({ onHome, onCreate }: Props) {
+  const [authOpen, setAuthOpen] = useState(false)
+  const [user, setUser] = useState<UserProfile>(getActiveUser())
+
+  useEffect(() => {
+    const handleAuthChange = () => setUser(getActiveUser())
+    window.addEventListener('cinefund_auth_change', handleAuthChange)
+    return () => window.removeEventListener('cinefund_auth_change', handleAuthChange)
+  }, [])
+
   return (
-    <header className="masthead sticky top-0 z-10 bg-ink/95 backdrop-blur supports-[backdrop-filter]:bg-ink/80">
-      <button className="masthead-brand" onClick={onHome} aria-label="Home">
-        Cine<em>Fund</em>
-      </button>
-      <nav className="masthead-nav items-center">
-        <button className="link" onClick={onHome}>
-          Index
-        </button>
+    <>
+      <header className="sticky top-0 z-40 bg-obsidian/95 backdrop-blur-md border-b border-white/[0.08] px-[var(--gutter)] py-3.5 flex items-center justify-between">
+        {/* Brand */}
         <button
-          className="link link-accent bg-paper text-ink px-3 py-1.5 hover:bg-accent hover:text-paper hover:border-accent transition-colors"
-          onClick={onCreate}
+          className="flex items-center gap-2.5 text-left group transition-transform active:scale-95"
+          onClick={onHome}
+          aria-label="CineFund Home"
         >
-          Submit a film
+          <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-amber to-amber-bright/80 flex items-center justify-center text-ink font-cinema font-bold text-sm shadow-[0_0_12px_rgba(229,169,60,0.3)]">
+            35
+          </div>
+          <div>
+            <span className="font-cinema font-black tracking-widest text-lg text-silver group-hover:text-amber transition-colors">
+              CINE<span className="text-amber">FUND</span>
+            </span>
+            <span className="hidden sm:block text-[9px] font-mono tracking-widest text-silver-dim uppercase">
+              35mm Indie Crowdfunding & HLS Streaming
+            </span>
+          </div>
         </button>
-        <span className="hidden md:inline-flex tw-badge">TS + Tailwind • React 19</span>
-      </nav>
-    </header>
+
+        {/* Navigation & User Menu */}
+        <nav className="flex items-center gap-3 sm:gap-5">
+          <button
+            className="text-xs font-mono tracking-wider uppercase text-silver-dim hover:text-white transition-colors px-2 py-1"
+            onClick={onHome}
+          >
+            Vault
+          </button>
+
+          <button
+            className="text-xs font-medium px-3.5 py-1.5 rounded-lg bg-amber hover:bg-amber-bright text-ink font-semibold shadow-[0_0_15px_rgba(229,169,60,0.2)] hover:shadow-[0_0_20px_rgba(229,169,60,0.4)] transition-all active:scale-95"
+            onClick={onCreate}
+          >
+            + Submit Film
+          </button>
+
+          {/* User Auth Switcher Button */}
+          <button
+            onClick={() => setAuthOpen(true)}
+            className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-amber/40 transition-all text-xs"
+            title="Switch User / Security Details"
+          >
+            <span className="h-5 w-5 rounded-full bg-amber/20 text-amber font-mono font-bold text-[11px] flex items-center justify-center">
+              {user.avatar}
+            </span>
+            <span className="hidden sm:inline font-medium text-silver">{user.name}</span>
+            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-white/10 text-silver-dim hidden md:inline">
+              {user.role}
+            </span>
+          </button>
+        </nav>
+      </header>
+
+      <AuthModal isOpen={authOpen} onClose={() => setAuthOpen(false)} />
+    </>
   )
 }

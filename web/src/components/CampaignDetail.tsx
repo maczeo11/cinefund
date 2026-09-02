@@ -2,8 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
+import { getActiveUser } from './AuthModal.tsx'
 
-const BACKER_ID = '00000000-0000-0000-0000-000000000002'
 const SAMPLE_HLS_STREAM = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
 
 type Props = { id: string; onBack: () => void }
@@ -106,9 +106,10 @@ export default function CampaignDetail({ id, onBack }: Props) {
       return
     }
     setPhase('ordering')
+    const activeUser = getActiveUser()
     try {
       const pledge = await createPledge(id, {
-        backer_id: BACKER_ID,
+        backer_id: activeUser.id,
         tier_id: tier ? tier.id : null,
         amount: paise,
         message,
@@ -138,29 +139,46 @@ export default function CampaignDetail({ id, onBack }: Props) {
   }
 
   return (
-    <div>
-      <div style={{ paddingTop: 32 }}>
-        <button className="link" onClick={onBack}>
-          ← Index
+    <div className="py-2">
+      <div className="mb-6">
+        <button
+          onClick={onBack}
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] text-xs font-mono text-silver hover:text-amber transition-colors"
+        >
+          ← Return to Film Vault
         </button>
       </div>
 
       <div className="detail">
         <article>
-          <div className="detail-meta">
-            <span className="label">{campaign.category}</span>
-            <span className="dot">·</span>
-            <span className="label">{campaign.status}</span>
+          <div className="flex items-center gap-3 mb-3 text-xs font-mono">
+            <span className="cinema-tag">35MM MASTER REEL</span>
+            <span className="text-silver-faint">·</span>
+            <span className="text-silver-dim uppercase">{campaign.category}</span>
+            <span className="cinema-live ml-auto">
+              <span className="h-1.5 w-1.5 rounded-full bg-crimson animate-ping" />
+              {campaign.status}
+            </span>
           </div>
-          <h1 className="detail-title">{campaign.title}</h1>
-          <p className="detail-tagline">{campaign.tagline}</p>
 
-          <VideoPlayer src={SAMPLE_HLS_STREAM} title="Pitch reel" />
+          <h1 className="font-cinema text-3xl sm:text-4xl font-extrabold text-silver tracking-wide leading-tight mb-2">
+            {campaign.title}
+          </h1>
+          <p className="text-sm sm:text-base text-silver-dim font-sans mb-6 leading-relaxed">
+            {campaign.tagline}
+          </p>
 
-          <section className="section">
-            <h2>Synopsis</h2>
-            <p className="prose">{campaign.synopsis || campaign.tagline}</p>
-            <p className="mt-3 text-xs text-white/30">POST /api/v1/uploads → presigned S3 → FFmpeg HLS (GOP 48, 24fps, no upscale)</p>
+          <div className="bg-black/80 p-2 sm:p-3 rounded-2xl border border-white/10 mb-8 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
+            <VideoPlayer src={SAMPLE_HLS_STREAM} title={`${campaign.title} — Workprint Trailer`} />
+          </div>
+
+          <section className="section bg-celluloid border border-white/[0.08] p-6 rounded-2xl mb-8">
+            <h2 className="font-cinema text-xl font-bold text-silver mb-3">Film Synopsis</h2>
+            <p className="text-sm text-silver-dim font-sans leading-relaxed">{campaign.synopsis || campaign.tagline}</p>
+            <div className="mt-4 pt-4 border-t border-white/[0.06] flex items-center gap-2 text-xs font-mono text-silver-faint">
+              <span className="text-amber">Direct-to-S3 Uploads:</span>
+              <span>Presigned PUT → Kafka Event → FFmpeg Transcode (24fps strict GOP 48)</span>
+            </div>
           </section>
 
           {tiers.length > 0 && (

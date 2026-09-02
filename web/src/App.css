@@ -1,15 +1,15 @@
 :root {
-  --ink: #0b0b0c;
-  --ink-raised: #101011;
-  --paper: #ece9e4;
-  --paper-dim: #8e8a83;
-  --paper-faint: #5d5a55;
-  --rule: rgba(236, 233, 228, 0.14);
-  --rule-soft: rgba(236, 233, 228, 0.07);
-  --accent: #c8553d;
+  --ink: #0B0D13;
+  --ink-raised: #121622;
+  --paper: #F1F3F7;
+  --paper-dim: #8B95A5;
+  --paper-faint: #4B5565;
+  --rule: rgba(255, 255, 255, 0.08);
+  --rule-soft: rgba(255, 255, 255, 0.04);
+  --accent: #E5A93C;
 
-  --serif: 'Instrument Serif', Georgia, 'Times New Roman', serif;
-  --sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --serif: 'Cinzel', Georgia, 'Times New Roman', serif;
+  --sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
 
   --measure: 62ch;
   --gutter: clamp(20px, 5vw, 64px);
