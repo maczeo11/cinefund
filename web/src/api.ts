@@ -273,3 +273,61 @@ export const confirmPledge = async (pledgeId: string, checkout: unknown): Promis
     }
   }
 }
+
+export type PresignResponse = {
+  asset_id: string
+  upload_url: string
+}
+
+export const getPresignedUploadUrl = async (data: {
+  owner_id: string
+  campaign_id?: string
+  purpose?: string
+  content_type: string
+}): Promise<PresignResponse> => {
+  return await request<PresignResponse>('/uploads', { method: 'POST', body: data })
+}
+
+export const completeUpload = async (assetId: string): Promise<void> => {
+  await request<void>(`/uploads/${assetId}/complete`, { method: 'POST' })
+}
+
+export const uploadVideoFileToS3 = async (
+  file: File,
+  ownerId: string,
+  campaignId?: string,
+  onProgress?: (pct: number) => void
+): Promise<string> => {
+  // 1. Fetch presigned S3 PUT URL from CineFund API
+  const presign = await getPresignedUploadUrl({
+    owner_id: ownerId,
+    campaign_id: campaignId,
+    purpose: 'FILM',
+    content_type: file.type || 'video/mp4',
+  })
+
+  // 2. Direct browser-to-S3 upload with live progress tracking
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', presign.upload_url, true)
+    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100))
+        }
+      }
+    }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      else reject(new Error(`S3 direct upload failed with HTTP status ${xhr.status}`))
+    }
+    xhr.onerror = () => reject(new Error('Network error during S3 direct upload'))
+    xhr.send(file)
+  })
+
+  // 3. Notify CineFund backend to verify S3 object and enqueue transcode job
+  await completeUpload(presign.asset_id)
+
+  return presign.asset_id
+}

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, type Campaign, type Tier } from '../api'
+import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
 import { getActiveUser } from './AuthModal.tsx'
@@ -21,6 +21,12 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [message, setMessage] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
   const [pledgeError, setPledgeError] = useState<string | null>(null)
+
+  const [uploadFile, setUploadFile] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null)
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     const [c, t] = await Promise.all([getCampaign(id), getTiers(id)])
@@ -126,6 +132,28 @@ export default function CampaignDetail({ id, onBack }: Props) {
     }
   }
 
+  async function handleVideoUpload() {
+    if (!uploadFile) return
+    setUploading(true)
+    setUploadError(null)
+    setUploadSuccess(null)
+    setUploadProgress(0)
+    try {
+      const activeUser = getActiveUser()
+      await uploadVideoFileToS3(uploadFile, activeUser.id, id, (pct) => {
+        setUploadProgress(pct)
+      })
+      setUploadSuccess(`Success! "${uploadFile.name}" was uploaded directly to AWS S3 bucket. Transcode worker enqueued.`)
+      setUploadFile(null)
+      setUploadProgress(null)
+    } catch (err) {
+      setUploadError((err as Error).message)
+      setUploadProgress(null)
+    } finally {
+      setUploading(false)
+    }
+  }
+
   if (loading) return <p className="status">Loading…</p>
   if (error) return <p className="status notice">{error}</p>
   if (!campaign) return <p className="status">Not found.</p>
@@ -168,8 +196,66 @@ export default function CampaignDetail({ id, onBack }: Props) {
             {campaign.tagline}
           </p>
 
-          <div className="bg-black/80 p-2 sm:p-3 rounded-2xl border border-white/10 mb-8 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
+          <div className="bg-black/80 p-2 sm:p-3 rounded-2xl border border-white/10 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
             <VideoPlayer src={SAMPLE_HLS_STREAM} title={`${campaign.title} — Workprint Trailer`} />
+          </div>
+
+          {/* S3 Direct Video Uploader */}
+          <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-5 mb-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-silver font-cinema tracking-wide">Upload Film or Trailer (.mp4)</h3>
+                <p className="text-xs text-silver-dim font-mono">Direct Browser-to-S3 Presigned Upload • Never touches API memory</p>
+              </div>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono border border-amber/30 text-amber bg-amber/10">AWS S3 BUCKET</span>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              <input
+                type="file"
+                accept="video/mp4,video/*"
+                onChange={(e) => {
+                  if (e.target.files && e.target.files[0]) {
+                    setUploadFile(e.target.files[0])
+                    setUploadSuccess(null)
+                    setUploadError(null)
+                  }
+                }}
+                className="file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-mono file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer text-xs text-silver"
+              />
+              <button
+                type="button"
+                onClick={handleVideoUpload}
+                disabled={!uploadFile || uploading}
+                className="px-4 py-2 rounded-lg bg-amber hover:bg-amber-light text-night font-bold text-xs transition-all disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
+              >
+                {uploading ? (uploadProgress !== null ? `Uploading: ${uploadProgress}%` : 'Presigning…') : 'Upload to AWS S3'}
+              </button>
+            </div>
+
+            {uploadFile && (
+              <p className="text-[11px] font-mono text-silver-faint">
+                Selected: <span className="text-white">{uploadFile.name}</span> ({(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)
+              </p>
+            )}
+
+            {uploadProgress !== null && (
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-[11px] font-mono text-amber">
+                  <span>Direct streaming to S3...</span>
+                  <span>{uploadProgress}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-amber transition-all duration-200"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {uploadSuccess && <p className="text-xs font-mono text-emerald-400 bg-emerald-950/30 p-2.5 rounded border border-emerald-800/40">{uploadSuccess}</p>}
+            {uploadError && <p className="text-xs font-mono text-rose-400 bg-rose-950/30 p-2.5 rounded border border-rose-800/40">{uploadError}</p>}
           </div>
 
           <section className="section bg-celluloid border border-white/[0.08] p-6 rounded-2xl mb-8">
