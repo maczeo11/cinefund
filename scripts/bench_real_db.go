@@ -39,7 +39,7 @@ func main() {
 
 	dsn := os.Getenv("POSTGRES_DSN")
 	if dsn == "" {
-		dsn = "postgres://cinefund:cinefund@localhost:5433/cinefund?sslmode=disable"
+		dsn = "postgres://cinefund:cinefund@localhost:5433/cinefund?sslmode=disable" //nolint:gosec // dev benchmark fallback
 	}
 	redisAddr := os.Getenv("REDIS_ADDR")
 	if redisAddr == "" {
@@ -59,7 +59,7 @@ func main() {
 	}
 
 	rdb := goredis.NewClient(&goredis.Options{Addr: redisAddr, DB: 2})
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 	_ = rdb.FlushDB(ctx).Err()
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -79,8 +79,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "seed campaign: %v\n", err)
 		os.Exit(1)
 	}
-	defer pool.Exec(ctx, `DELETE FROM campaigns WHERE id=$1`, campaignID)
-	defer pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, creatorID)
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM campaigns WHERE id=$1`, campaignID) }()
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, creatorID) }()
 
 	// create n pledges (each with its own backer + order + webhook body)
 	type job struct {
@@ -98,12 +98,12 @@ func main() {
 		body, _, _ := gw.Capture(p.ProviderOrderID, fake.PaymentEntity{ID: "pay_bench_" + fmt.Sprint(i), Amount: 50000, Fee: 1000, Tax: 180, Status: "captured"}, secret)
 		jobs[i] = job{body: body}
 		// track backer for cleanup
-		defer pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, backerID)
+		defer func(bID uuid.UUID) { _, _ = pool.Exec(ctx, `DELETE FROM users WHERE id=$1`, bID) }(backerID)
 	}
 
 	// also track pledges cleanup via campaign cascade? just delete by campaign
-	defer pool.Exec(ctx, `DELETE FROM pledges WHERE campaign_id=$1`, campaignID)
-	defer pool.Exec(ctx, `DELETE FROM payment_events WHERE provider='razorpay'`)
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM pledges WHERE campaign_id=$1`, campaignID) }()
+	defer func() { _, _ = pool.Exec(ctx, `DELETE FROM payment_events WHERE provider='razorpay'`) }()
 
 	durs := make([]time.Duration, 0, *n)
 	var mu sync.Mutex

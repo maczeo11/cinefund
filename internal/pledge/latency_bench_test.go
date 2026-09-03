@@ -137,14 +137,3 @@ func report(t *testing.T, name string, durs []time.Duration, conc int) {
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
-
-func latencyEventID(t *testing.T, body []byte) string {
-	t.Helper()
-	return string(body[:minLatency(40, len(body))])
-}
-func minLatency(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
