@@ -11,13 +11,11 @@ export default function HealthBar() {
 
   useEffect(() => {
     const healthUrl = `${base.replace('/api/v1', '')}/health/ready`
-    Promise.all([
-      fetch(healthUrl).then(r => r.json().then(j => ({ ok: r.ok, j }))),
-      getConfig().catch(() => ({ razorpay_key_id: '' } as { razorpay_key_id: string })),
-    ])
-      .then(([{ ok, j }, cfg]) => {
+    fetch(healthUrl)
+      .then(r => r.json().then(j => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
         setReady(j as Ready)
-        setMode(!ok ? 'archive' : (cfg as { razorpay_key_id?: string }).razorpay_key_id ? 'live' : 'fake')
+        setMode(ok && (j as Ready)?.postgres === 'ok' ? 'live' : 'archive')
       })
       .catch(() => {
         setMode('archive')
@@ -29,30 +27,21 @@ export default function HealthBar() {
       {mode === 'live' && (
         <span className="inline-flex items-center gap-1.5 text-emerald-400">
           <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-semibold tracking-wider uppercase">Live Go Cluster</span>
-        </span>
-      )}
-
-      {mode === 'fake' && (
-        <span className="inline-flex items-center gap-1.5 text-amber">
-          <span className="h-2 w-2 rounded-full bg-amber animate-pulse" />
-          <span className="font-semibold tracking-wider uppercase">Portfolio Dev Gateway</span>
+          <span className="font-semibold tracking-wider uppercase">Live AWS EC2 Cluster</span>
         </span>
       )}
 
       {mode === 'archive' && (
         <span className="inline-flex items-center gap-1.5 text-amber">
           <span className="h-2 w-2 rounded-full bg-amber animate-pulse" />
-          <span className="font-semibold tracking-wider uppercase">35mm Preview Archive</span>
+          <span className="font-semibold tracking-wider uppercase">Cluster Connecting...</span>
         </span>
       )}
-
-      <span className="text-silver-faint hidden md:inline">Endpoint: {base}</span>
 
       {ready && (
         <div className="flex items-center gap-3">
           <span className={`text-[11px] ${ready.postgres === 'ok' ? 'text-emerald-400' : 'text-crimson'}`}>
-            PG: {ready.postgres}
+            Neon PG: {ready.postgres}
           </span>
           <span className={`text-[11px] ${ready.redis === 'ok' ? 'text-emerald-400' : 'text-amber'}`}>
             Redis: {ready.redis}
@@ -60,21 +49,15 @@ export default function HealthBar() {
         </div>
       )}
 
+      {mode === 'live' && (
+        <span className="text-emerald-300/90 text-[11px] ml-auto hidden sm:inline">
+          Live Go Backend • Dual-Entry Escrow Ledger & Outbox Active
+        </span>
+      )}
+
       {mode === 'archive' && (
         <span className="text-silver-dim text-[11px] ml-auto">
-          Sample films ready for evaluation • Connects seamlessly to live cluster via <code className="text-amber">VITE_API_BASE</code>
-        </span>
-      )}
-
-      {mode === 'fake' && (
-        <span className="text-amber/80 text-[11px] ml-auto hidden lg:inline">
-          HMAC + Redis SETNX + double-entry escrow active (paise integers)
-        </span>
-      )}
-
-      {mode === 'live' && (
-        <span className="text-emerald-300/80 text-[11px] ml-auto hidden lg:inline">
-          PostgreSQL Outbox + SKIP LOCKED transaction pooling live
+          Sample films ready • Connecting to AWS EC2 cluster
         </span>
       )}
     </div>

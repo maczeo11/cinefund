@@ -30,9 +30,10 @@ export const DEMO_USERS: UserProfile[] = [
 
 const STORAGE_KEY = 'cinefund_current_user'
 
-export function getActiveUser(): UserProfile {
+export function getActiveUser(): UserProfile | null {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved === 'null') return null
     if (saved) return JSON.parse(saved)
   } catch {
     // fallback
@@ -40,9 +41,17 @@ export function getActiveUser(): UserProfile {
   return DEMO_USERS[0]
 }
 
-export function setActiveUser(user: UserProfile) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
+export function setActiveUser(user: UserProfile | null) {
+  if (user === null) {
+    localStorage.setItem(STORAGE_KEY, 'null')
+  } else {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
+  }
   window.dispatchEvent(new Event('cinefund_auth_change'))
+}
+
+export function logout() {
+  setActiveUser(null)
 }
 
 type Props = {
@@ -153,6 +162,18 @@ export default function AuthModal({ isOpen, onClose }: Props) {
                 )
               })}
             </div>
+
+            {current && (
+              <button
+                onClick={() => {
+                  logout()
+                  onClose()
+                }}
+                className="w-full mt-4 py-2.5 rounded-xl border border-crimson/30 bg-crimson/10 hover:bg-crimson/20 text-crimson text-xs font-mono font-medium transition-all"
+              >
+                Log Out of Current Session
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3 text-xs">

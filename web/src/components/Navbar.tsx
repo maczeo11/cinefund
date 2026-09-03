@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
+import AuthModal, { getActiveUser, logout, type UserProfile } from './AuthModal.tsx'
 
 type Props = {
   onHome: () => void
@@ -8,7 +8,7 @@ type Props = {
 
 export default function Navbar({ onHome, onCreate }: Props) {
   const [authOpen, setAuthOpen] = useState(false)
-  const [user, setUser] = useState<UserProfile>(getActiveUser())
+  const [user, setUser] = useState<UserProfile | null>(getActiveUser())
 
   useEffect(() => {
     const handleAuthChange = () => setUser(getActiveUser())
@@ -54,20 +54,41 @@ export default function Navbar({ onHome, onCreate }: Props) {
             + Submit Film
           </button>
 
-          {/* User Auth Switcher Button */}
-          <button
-            onClick={() => setAuthOpen(true)}
-            className="flex items-center gap-2 px-2.5 py-1 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-amber/40 transition-all text-xs"
-            title="Switch User / Security Details"
-          >
-            <span className="h-5 w-5 rounded-full bg-amber/20 text-amber font-mono font-bold text-[11px] flex items-center justify-center">
-              {user.avatar}
-            </span>
-            <span className="hidden sm:inline font-medium text-silver">{user.name}</span>
-            <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-white/10 text-silver-dim hidden md:inline">
-              {user.role}
-            </span>
-          </button>
+          {/* User Auth Switcher & Log Out Buttons */}
+          {user ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setAuthOpen(true)}
+                className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-amber/40 transition-all text-xs"
+                title="Switch User Role"
+              >
+                <span className="h-5 w-5 rounded-full bg-amber/20 text-amber font-mono font-bold text-[11px] flex items-center justify-center">
+                  {user.avatar}
+                </span>
+                <span className="hidden sm:inline font-medium text-silver">{user.name}</span>
+                <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-white/10 text-silver-dim hidden md:inline">
+                  {user.role}
+                </span>
+              </button>
+
+              <button
+                onClick={() => {
+                  logout()
+                }}
+                className="text-xs font-mono text-silver-dim hover:text-crimson px-2.5 py-1.5 rounded-lg border border-white/10 hover:border-crimson/30 hover:bg-crimson/10 transition-all"
+                title="Log Out"
+              >
+                Log Out
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setAuthOpen(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-amber/40 bg-amber/10 hover:bg-amber/20 text-amber text-xs font-medium font-mono transition-all active:scale-95 shadow-[0_0_12px_rgba(229,169,60,0.15)]"
+            >
+              <span>Log In</span>
+            </button>
+          )}
         </nav>
       </header>
 
