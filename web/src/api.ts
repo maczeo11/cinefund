@@ -2,7 +2,7 @@
 // Base: http://localhost:8080/api/v1 — all amounts in paise (int)
 // Automatically falls back to Arthouse Demo Vault when backend cluster is cold or initializing.
 
-const BASE = (import.meta.env.VITE_API_BASE as string) || 'http://localhost:8080/api/v1'
+const BASE = (import.meta.env.VITE_API_BASE as string) || '/api/v1'
 
 export const getApiBase = () => BASE
 

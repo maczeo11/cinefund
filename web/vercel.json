@@ -5,6 +5,10 @@
       "destination": "http://43.205.27.169:8080/api/:path*"
     },
     {
+      "source": "/health/:path*",
+      "destination": "http://43.205.27.169:8080/health/:path*"
+    },
+    {
       "source": "/(.*)",
       "destination": "/"
     }
