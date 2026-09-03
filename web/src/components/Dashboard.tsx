@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getCampaigns, type Campaign } from '../api'
 import { rupees, percentOf } from '../format'
 import { Link } from 'react-router-dom'
+import HealthBar from './HealthBar.tsx'
 
 export default function Dashboard() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
@@ -16,9 +17,13 @@ export default function Dashboard() {
   if (loading) return <p className="status">Loading dashboard…</p>
 
   return (
-    <div className="max-w-6xl">
+    <div className="max-w-6xl space-y-6">
+      <div className="rounded-xl overflow-hidden border border-white/10">
+        <HealthBar />
+      </div>
+
       <div className="flex items-baseline justify-between mb-6">
-        <h1 className="font-serif text-3xl">Creator dashboard</h1>
+        <h1 className="font-serif text-3xl">System Telemetry & Queues</h1>
         <span className="label">{campaigns.length} campaigns • ledger: debits = credits</span>
       </div>
 

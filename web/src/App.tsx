@@ -6,7 +6,6 @@ import CampaignDetail from './components/CampaignDetail.tsx'
 import Dashboard from './components/Dashboard.tsx'
 import Pledges from './components/Pledges.tsx'
 import Watch from './components/Watch.tsx'
-import HealthBar from './components/HealthBar.tsx'
 import './App.css'
 
 function ListPage() {
@@ -60,12 +59,7 @@ function AppShell() {
             </button>
           )
         })}
-        <span className="ml-auto hidden lg:inline text-[11px] text-silver-faint font-mono">
-          Strict GOP 48 Transcode • Skip-Locked Outbox • Balanced Paise Ledgers
-        </span>
       </div>
-
-      <HealthBar />
 
       <main className="content flex-1 px-[var(--gutter)] py-6 max-w-7xl mx-auto w-full">
         <Routes>

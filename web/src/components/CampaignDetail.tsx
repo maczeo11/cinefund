@@ -4,7 +4,7 @@ import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
 import { getActiveUser } from './AuthModal.tsx'
 
-const SAMPLE_HLS_STREAM = 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8'
+const CINEMATIC_HLS_STREAM = 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
 
 type Props = { id: string; onBack: () => void }
 type Phase = 'idle' | 'ordering' | 'paying' | 'confirming' | 'done'
@@ -21,6 +21,10 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [message, setMessage] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
   const [pledgeError, setPledgeError] = useState<string | null>(null)
+
+  const [videoSrc, setVideoSrc] = useState<string>(() => {
+    return localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM
+  })
 
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -143,7 +147,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
       await uploadVideoFileToS3(uploadFile, activeUser.id, id, (pct) => {
         setUploadProgress(pct)
       })
-      setUploadSuccess(`Success! "${uploadFile.name}" was uploaded directly to AWS S3 bucket. Transcode worker enqueued.`)
+      const localUrl = URL.createObjectURL(uploadFile)
+      setVideoSrc(localUrl)
+      try {
+        localStorage.setItem(`cinefund_video_${id}`, localUrl)
+      } catch {
+        // quota fallback
+      }
+      setUploadSuccess(`Success! "${uploadFile.name}" streamed to AWS S3. Master player switched to your reel!`)
       setUploadFile(null)
       setUploadProgress(null)
     } catch (err) {
@@ -197,7 +208,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
           </p>
 
           <div className="bg-black/80 p-2 sm:p-3 rounded-2xl border border-white/10 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
-            <VideoPlayer src={SAMPLE_HLS_STREAM} title={`${campaign.title} — Workprint Trailer`} />
+            <VideoPlayer src={videoSrc} title={`${campaign.title} — Workprint Reel`} />
           </div>
 
           {/* S3 Direct Video Uploader */}
@@ -261,10 +272,6 @@ export default function CampaignDetail({ id, onBack }: Props) {
           <section className="section bg-celluloid border border-white/[0.08] p-6 rounded-2xl mb-8">
             <h2 className="font-cinema text-xl font-bold text-silver mb-3">Film Synopsis</h2>
             <p className="text-sm text-silver-dim font-sans leading-relaxed">{campaign.synopsis || campaign.tagline}</p>
-            <div className="mt-4 pt-4 border-t border-white/[0.06] flex items-center gap-2 text-xs font-mono text-silver-faint">
-              <span className="text-amber">Direct-to-S3 Uploads:</span>
-              <span>Presigned PUT → Kafka Event → FFmpeg Transcode (24fps strict GOP 48)</span>
-            </div>
           </section>
 
           {tiers.length > 0 && (
@@ -332,7 +339,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
               <button type="submit" className="btn btn-wide" disabled={busy}>
                 {busy ? busyLabel[phase as Exclude<Phase, 'idle' | 'done'>] : 'Back this film'}
               </button>
-              <p className="text-[11px] text-white/30 text-center">HMAC + Redis SETNX + Postgres unique → 50-goroutine exactly-once</p>
+              <p className="text-[11px] text-white/40 text-center font-mono">🔒 Encrypted Escrow Checkout • Guaranteed Allocation</p>
             </form>
           )}
         </aside>

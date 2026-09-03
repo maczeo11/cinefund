@@ -4,8 +4,8 @@ import VideoPlayer from './VideoPlayer.tsx'
 const REELS = [
   {
     id: 'reel-1',
-    title: 'The Last Frame — 35mm Workprint (GOP 48 HLS)',
-    src: 'https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8',
+    title: 'The Last Frame — 35mm Master (Sci-Fi Cut)',
+    src: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
     aspect: '2.39:1 Anamorphic',
     fps: '24.000 fps',
     ladder: '1080p / 720p / 480p ABR',
