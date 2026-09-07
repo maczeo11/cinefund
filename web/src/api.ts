@@ -20,6 +20,7 @@ export type Campaign = {
   deadline?: string
   created_at: string
   poster_url?: string
+  cover_key?: string
   backdrop_url?: string
   creator_name?: string
 }
@@ -105,8 +106,9 @@ export const POSTER_PRESETS = [
   },
 ]
 
-export function getPosterForCampaign(campaign?: { poster_url?: string; category?: string } | null): string {
+export function getPosterForCampaign(campaign?: { poster_url?: string; cover_key?: string; category?: string } | null): string {
   if (campaign?.poster_url) return campaign.poster_url
+  if (campaign?.cover_key && (campaign.cover_key.startsWith('http') || campaign.cover_key.startsWith('/'))) return campaign.cover_key
   const cat = (campaign?.category || 'DRAMA').toUpperCase()
   return GENRE_POSTERS[cat] || GENRE_POSTERS.DRAMA
 }
@@ -381,7 +383,11 @@ export const createCampaign = async (data: {
   creator_name?: string
 }): Promise<Campaign> => {
   try {
-    return await request<Campaign>('/campaigns', { method: 'POST', body: data })
+    const payload = {
+      ...data,
+      cover_key: data.poster_url,
+    }
+    return await request<Campaign>('/campaigns', { method: 'POST', body: payload })
   } catch {
     const poster = data.poster_url?.trim() || getPosterForCampaign({ category: data.category })
     const newCamp: Campaign = {

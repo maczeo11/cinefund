@@ -21,6 +21,7 @@ type Campaign struct {
 	BackerCount  int        `json:"backer_count"`
 	Status       string     `json:"status"`
 	Deadline     *time.Time `json:"deadline"`
+	CoverKey     string     `json:"cover_key,omitempty"`
 }
 
 type Tier struct {
@@ -40,6 +41,7 @@ type NewCampaign struct {
 	Synopsis  string    `json:"synopsis"`
 	Category  string    `json:"category"`
 	Goal      int64     `json:"goal"`
+	CoverKey  string    `json:"cover_key,omitempty"`
 }
 
 type NewTier struct {
@@ -60,11 +62,11 @@ func (s *Store) Create(ctx context.Context, in NewCampaign) (*Campaign, error) {
 	var id uuid.UUID
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO campaigns (id, creator_id, slug, title, tagline, synopsis,
-		                       category, goal_amount, status)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'DRAFT')
+		                       category, goal_amount, cover_key, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'DRAFT')
 		RETURNING id`,
 		uuid.New(), in.CreatorID, uuid.NewString()[:8], in.Title, in.Tagline,
-		in.Synopsis, in.Category, in.Goal).Scan(&id)
+		in.Synopsis, in.Category, in.Goal, in.CoverKey).Scan(&id)
 	if err != nil {
 		return nil, err
 	}
@@ -75,17 +77,17 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (*Campaign, error) {
 	var c Campaign
 	err := s.pool.QueryRow(ctx, `
 		SELECT id, creator_id, title, tagline, COALESCE(synopsis, ''), category,
-		       goal_amount, raised_amount, backer_count, status, deadline
+		       goal_amount, raised_amount, backer_count, status, deadline, COALESCE(cover_key, '')
 		  FROM campaigns WHERE id = $1`, id).
 		Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Synopsis, &c.Category,
-			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline)
+			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline, &c.CoverKey)
 	return &c, err
 }
 
 func (s *Store) List(ctx context.Context) ([]Campaign, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, creator_id, title, tagline, COALESCE(synopsis, ''), category,
-		       goal_amount, raised_amount, backer_count, status, deadline
+		       goal_amount, raised_amount, backer_count, status, deadline, COALESCE(cover_key, '')
 		  FROM campaigns
 		 ORDER BY created_at DESC
 		 LIMIT 50`)
@@ -98,7 +100,7 @@ func (s *Store) List(ctx context.Context) ([]Campaign, error) {
 	for rows.Next() {
 		var c Campaign
 		if err := rows.Scan(&c.ID, &c.CreatorID, &c.Title, &c.Tagline, &c.Synopsis, &c.Category,
-			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline); err != nil {
+			&c.GoalAmount, &c.RaisedAmount, &c.BackerCount, &c.Status, &c.Deadline, &c.CoverKey); err != nil {
 			return nil, err
 		}
 		out = append(out, c)
