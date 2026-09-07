@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, type Campaign, type Tier } from '../api'
+import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
-import { getActiveUser } from './AuthModal.tsx'
+import { getActiveUser, type UserProfile } from './AuthModal.tsx'
 
 const CINEMATIC_HLS_STREAM = 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
 
@@ -45,6 +45,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
       .catch(err => setError(`Live backend error: ${(err as Error).message} — check VITE_API_BASE`))
       .finally(() => setLoading(false))
   }, [id, refresh])
+
+  const [activeUser, setActiveUser] = useState<UserProfile | null>(getActiveUser())
+
+  useEffect(() => {
+    const handleAuthChange = () => setActiveUser(getActiveUser())
+    window.addEventListener('cinefund_auth_change', handleAuthChange)
+    return () => window.removeEventListener('cinefund_auth_change', handleAuthChange)
+  }, [])
 
   function selectTier(t: Tier) {
     if (tier?.id === t.id) {
@@ -117,9 +125,12 @@ export default function CampaignDetail({ id, onBack }: Props) {
     }
     setPhase('ordering')
     const activeUser = getActiveUser()
+    const backerId = activeUser?.id || '00000000-0000-0000-0000-000000000002'
+    const backerName = activeUser?.name || 'Film Patron'
     try {
       const pledge = await createPledge(id, {
-        backer_id: activeUser.id,
+        backer_id: backerId,
+        backer_name: backerName,
         tier_id: tier ? tier.id : null,
         amount: paise,
         message,
@@ -144,7 +155,8 @@ export default function CampaignDetail({ id, onBack }: Props) {
     setUploadProgress(0)
     try {
       const activeUser = getActiveUser()
-      await uploadVideoFileToS3(uploadFile, activeUser.id, id, (pct) => {
+      const ownerId = activeUser?.id || '00000000-0000-0000-0000-000000000001'
+      await uploadVideoFileToS3(uploadFile, ownerId, id, (pct) => {
         setUploadProgress(pct)
       })
       const localUrl = URL.createObjectURL(uploadFile)
@@ -177,9 +189,11 @@ export default function CampaignDetail({ id, onBack }: Props) {
     confirming: 'Recording…',
   }
 
+  const poster = getPosterForCampaign(campaign)
+
   return (
-    <div className="py-2">
-      <div className="mb-6">
+    <div className="py-2 animate-fadeIn">
+      <div className="mb-4">
         <button
           onClick={onBack}
           className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] text-xs font-mono text-silver hover:text-amber transition-colors"
@@ -188,26 +202,59 @@ export default function CampaignDetail({ id, onBack }: Props) {
         </button>
       </div>
 
+      {/* Cinematic Hero Backdrop Banner */}
+      <div className="relative w-full h-56 sm:h-72 md:h-80 rounded-2xl overflow-hidden mb-6 border border-white/[0.1] shadow-2xl bg-black group">
+        <img
+          src={poster}
+          alt={`${campaign.title} backdrop`}
+          onError={(e) => {
+            e.currentTarget.onerror = null
+            e.currentTarget.src = FALLBACK_POSTER_SVG
+          }}
+          className="w-full h-full object-cover object-center filter brightness-[0.7] contrast-[1.05] group-hover:scale-[1.02] transition-transform duration-700"
+        />
+        {/* Multi-layered cinematic gradients */}
+        <div className="absolute inset-0 bg-gradient-to-t from-obsidian via-obsidian/40 to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-gradient-to-r from-obsidian/85 via-obsidian/30 to-transparent pointer-events-none" />
+
+        {/* Banner Overlays */}
+        <div className="absolute bottom-4 left-4 right-4 sm:bottom-6 sm:left-6 sm:right-6 flex flex-col sm:flex-row sm:items-end justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 mb-2 text-xs font-mono">
+              <span className="px-2.5 py-0.5 rounded bg-black/80 backdrop-blur-md border border-white/20 text-silver font-semibold text-[11px]">
+                35MM MASTER WORKPRINT
+              </span>
+              <span className="text-silver-faint">·</span>
+              <span className="px-2.5 py-0.5 rounded bg-amber/20 backdrop-blur-md border border-amber/35 text-amber font-semibold text-[11px] uppercase">
+                {campaign.category}
+              </span>
+            </div>
+            <h1 className="font-cinema text-2xl sm:text-4xl lg:text-5xl font-extrabold text-silver tracking-wide leading-tight drop-shadow-md">
+              {campaign.title}
+            </h1>
+            <p className="text-xs sm:text-sm text-silver-dim font-sans max-w-xl line-clamp-1 mt-1">
+              {campaign.tagline}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="cinema-live px-3 py-1 text-xs shadow-lg bg-crimson/25 backdrop-blur-md">
+              <span className="h-2 w-2 rounded-full bg-crimson animate-ping" />
+              {campaign.status} ESCROW
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div className="detail">
         <article>
           <div className="flex items-center gap-3 mb-3 text-xs font-mono">
-            <span className="cinema-tag">35MM MASTER REEL</span>
+            <span className="cinema-tag">DIRECTOR WORKPRINT REEL</span>
             <span className="text-silver-faint">·</span>
             <span className="text-silver-dim uppercase">{campaign.category}</span>
-            <span className="cinema-live ml-auto">
-              <span className="h-1.5 w-1.5 rounded-full bg-crimson animate-ping" />
-              {campaign.status}
-            </span>
           </div>
 
-          <h1 className="font-cinema text-3xl sm:text-4xl font-extrabold text-silver tracking-wide leading-tight mb-2">
-            {campaign.title}
-          </h1>
-          <p className="text-sm sm:text-base text-silver-dim font-sans mb-6 leading-relaxed">
-            {campaign.tagline}
-          </p>
-
-          <div className="bg-black/80 p-2 sm:p-3 rounded-2xl border border-white/10 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
+          <div className="bg-black/85 p-2 sm:p-3 rounded-2xl border border-white/10 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
             <VideoPlayer src={videoSrc} title={`${campaign.title} — Workprint Reel`} />
           </div>
 
@@ -269,9 +316,60 @@ export default function CampaignDetail({ id, onBack }: Props) {
             {uploadError && <p className="text-xs font-mono text-rose-400 bg-rose-950/30 p-2.5 rounded border border-rose-800/40">{uploadError}</p>}
           </div>
 
-          <section className="section bg-celluloid border border-white/[0.08] p-6 rounded-2xl mb-8">
-            <h2 className="font-cinema text-xl font-bold text-silver mb-3">Film Synopsis</h2>
-            <p className="text-sm text-silver-dim font-sans leading-relaxed">{campaign.synopsis || campaign.tagline}</p>
+          {/* Film Synopsis with Theatrical Poster */}
+          <section className="section bg-celluloid border border-white/[0.08] p-5 sm:p-6 rounded-2xl mb-8">
+            <div className="flex flex-col sm:flex-row gap-5 sm:gap-6 items-start">
+              {/* Theatrical One-Sheet Poster Card */}
+              <div className="w-full sm:w-48 shrink-0 rounded-xl overflow-hidden border border-white/15 bg-black/60 shadow-xl group/poster">
+                <div className="aspect-[2/3] w-full relative overflow-hidden">
+                  <img
+                    src={poster}
+                    alt={`${campaign.title} poster artwork`}
+                    onError={(e) => {
+                      e.currentTarget.onerror = null
+                      e.currentTarget.src = FALLBACK_POSTER_SVG
+                    }}
+                    className="w-full h-full object-cover group-hover/poster:scale-105 transition-transform duration-500"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
+                  <div className="absolute bottom-2 left-2 right-2 text-center">
+                    <span className="text-[10px] font-mono uppercase tracking-widest text-amber font-bold px-2 py-0.5 rounded bg-black/80 backdrop-blur-md border border-amber/30 inline-block shadow">
+                      Film Poster
+                    </span>
+                  </div>
+                </div>
+                <div className="p-2.5 bg-black/60 border-t border-white/10 text-[10px] font-mono text-silver-dim space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-silver-faint">Stock:</span>
+                    <span className="text-silver font-medium">Kodak 5219</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-silver-faint">Scope:</span>
+                    <span className="text-silver font-medium">2.39:1 Anamorphic</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-silver-faint">Mix:</span>
+                    <span className="text-silver font-medium">Dolby Atmos</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Synopsis Details */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2.5">
+                  <span className="h-2 w-2 rounded-full bg-amber" />
+                  <h2 className="font-cinema text-xl font-bold text-silver">Film Synopsis & Concept</h2>
+                </div>
+                <p className="text-sm sm:text-base text-silver-dim font-sans leading-relaxed mb-4">
+                  {campaign.synopsis || campaign.tagline}
+                </p>
+                <div className="border-t border-white/[0.06] pt-3 text-xs font-mono text-silver-faint flex flex-wrap gap-4">
+                  <span>Reel ID: <strong className="text-silver">{campaign.id.slice(0, 8)}…</strong></span>
+                  <span>Director: <strong className="text-silver">{campaign.creator_name || 'Ava Chen Studio'}</strong></span>
+                  <span>Escrow: <strong className="text-amber">PostgreSQL Ledger</strong></span>
+                </div>
+              </div>
+            </div>
           </section>
 
           {tiers.length > 0 && (
@@ -323,7 +421,27 @@ export default function CampaignDetail({ id, onBack }: Props) {
           </div>
 
           {campaign.status === 'LIVE' && (
-            <form onSubmit={submit} className="form" style={{ marginTop: 28 }}>
+            <form onSubmit={submit} className="form" style={{ marginTop: 24 }}>
+              {/* Active Session Info Card */}
+              <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-4 flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="h-6 w-6 rounded-full bg-amber/20 text-amber font-cinema font-bold text-xs flex items-center justify-center shrink-0">
+                    {activeUser?.avatar || 'P'}
+                  </span>
+                  <div className="truncate">
+                    <span className="text-silver font-medium block truncate">
+                      {activeUser ? activeUser.name : 'Film Patron'}
+                    </span>
+                    <span className="text-[10px] font-mono text-silver-faint">
+                      {activeUser ? `${activeUser.role} Session` : 'Demo Backer'}
+                    </span>
+                  </div>
+                </div>
+                <span className="text-[10px] font-mono text-amber border border-amber/30 px-1.5 py-0.5 rounded bg-amber/10">
+                  Escrow Verified
+                </span>
+              </div>
+
               <div className="field">
                 <label className="label" htmlFor="amount">
                   {tier ? `Backing ${tier.title}` : 'Pledge amount'}

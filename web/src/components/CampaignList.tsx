@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { getCampaigns, type Campaign } from '../api'
+import { getCampaigns, getPosterForCampaign, FALLBACK_POSTER_SVG, type Campaign } from '../api'
 import { rupees, percentOf, daysLeft } from '../format'
 
 const CATEGORIES = ['ALL', 'DRAMA', 'COMEDY', 'DOCUMENTARY', 'ANIMATION', 'HORROR', 'SCIFI', 'EXPERIMENTAL'] as const
@@ -126,35 +126,59 @@ export default function CampaignList({ onSelect }: Props) {
           const days = daysLeft(c.deadline)
           const gauge = GAUGES[i % GAUGES.length]
           const percent = percentOf(c.raised_amount, c.goal_amount)
+          const poster = getPosterForCampaign(c)
 
           return (
             <div
               key={c.id}
               onClick={() => onSelect(c.id)}
-              className="group bg-celluloid border border-white/[0.08] hover:border-amber/40 rounded-2xl p-6 transition-all duration-300 cursor-pointer flex flex-col justify-between hover:shadow-[0_4px_30px_rgba(229,169,60,0.12)] relative overflow-hidden"
+              className="group bg-celluloid border border-white/[0.08] hover:border-amber/40 rounded-2xl p-4 sm:p-5 transition-all duration-300 cursor-pointer flex flex-col justify-between hover:shadow-[0_4px_35px_rgba(229,169,60,0.15)] relative overflow-hidden"
             >
               {/* Subtle film grain gradient overlay */}
               <div className="absolute inset-0 bg-gradient-to-br from-amber/[0.02] to-transparent pointer-events-none" />
 
               <div>
-                {/* Film Header Metadata */}
-                <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-white/[0.06] text-xs font-mono">
-                  <div className="flex items-center gap-2">
-                    <span className="cinema-tag">{gauge}</span>
-                    <span className="text-silver-faint">·</span>
-                    <span className="text-silver-dim uppercase">{c.category}</span>
+                {/* Widescreen 16:9 Cinematic Poster Thumbnail */}
+                <div className="relative aspect-video w-full overflow-hidden rounded-xl bg-black/80 border border-white/[0.1] mb-4 group-hover:border-amber/40 transition-colors shadow-lg">
+                  <img
+                    src={poster}
+                    alt={c.title}
+                    loading="lazy"
+                    onError={(e) => {
+                      e.currentTarget.onerror = null
+                      e.currentTarget.src = FALLBACK_POSTER_SVG
+                    }}
+                    className="w-full h-full object-cover object-center group-hover:scale-105 transition-transform duration-700 ease-out"
+                  />
+
+                  {/* Gradient overlays for cinematic depth & legibility */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-celluloid via-celluloid/20 to-transparent pointer-events-none" />
+                  <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-transparent pointer-events-none" />
+
+                  {/* Top Badge Overlay */}
+                  <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between gap-2 pointer-events-none">
+                    <span className="px-2 py-0.5 rounded bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-mono text-silver font-semibold shadow">
+                      {gauge}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md border border-white/20 text-[10px] font-mono font-semibold flex items-center gap-1.5 shadow">
+                      <span className="h-1.5 w-1.5 rounded-full bg-crimson animate-ping" />
+                      <span className="text-crimson">{c.status}</span>
+                    </span>
                   </div>
-                  <span className="cinema-live">
-                    <span className="h-1.5 w-1.5 rounded-full bg-crimson animate-ping" />
-                    {c.status}
-                  </span>
+
+                  {/* Bottom Category Badge */}
+                  <div className="absolute bottom-2.5 left-2.5 pointer-events-none">
+                    <span className="px-2.5 py-0.5 rounded-full bg-amber/20 backdrop-blur-md border border-amber/40 text-[10px] font-mono text-amber font-bold uppercase tracking-wider shadow">
+                      {c.category}
+                    </span>
+                  </div>
                 </div>
 
                 {/* Film Title & Tagline */}
-                <h2 className="font-cinema text-xl sm:text-2xl font-bold text-silver group-hover:text-amber transition-colors tracking-wide">
+                <h2 className="font-cinema text-xl sm:text-2xl font-bold text-silver group-hover:text-amber transition-colors tracking-wide line-clamp-1">
                   {c.title}
                 </h2>
-                <p className="mt-2 text-xs sm:text-sm text-silver-dim font-sans line-clamp-2 leading-relaxed">
+                <p className="mt-1.5 text-xs sm:text-sm text-silver-dim font-sans line-clamp-2 leading-relaxed">
                   {c.tagline}
                 </p>
               </div>

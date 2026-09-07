@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getCampaigns, type Campaign } from '../api'
+import { getCampaigns, getPosterForCampaign, FALLBACK_POSTER_SVG, type Campaign } from '../api'
 import { rupees, percentOf } from '../format'
 import { Link } from 'react-router-dom'
 import HealthBar from './HealthBar.tsx'
@@ -43,10 +43,25 @@ export default function Dashboard() {
             {campaigns.slice(0, 20).map(c => (
               <tr key={c.id} className="border-b border-white/[0.06] hover:bg-white/[0.03] transition-colors">
                 <td className="px-4 py-3">
-                  <Link to={`/campaigns/${c.id}`} className="font-serif hover:text-accent transition-colors">
-                    {c.title}
-                  </Link>
-                  <span className="block text-xs text-white/40">{c.category}</span>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-7 rounded overflow-hidden shrink-0 bg-black border border-white/10">
+                      <img
+                        src={getPosterForCampaign(c)}
+                        alt={c.title}
+                        onError={(e) => {
+                          e.currentTarget.onerror = null
+                          e.currentTarget.src = FALLBACK_POSTER_SVG
+                        }}
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                    <div>
+                      <Link to={`/campaigns/${c.id}`} className="font-serif hover:text-accent transition-colors font-medium">
+                        {c.title}
+                      </Link>
+                      <span className="block text-xs text-white/40">{c.category}</span>
+                    </div>
+                  </div>
                 </td>
                 <td className="px-4 py-3">
                   <span className={`tw-badge ${c.status === 'LIVE' ? '!bg-green-500/20 !text-green-400' : c.status === 'CLOSED' ? '!bg-white/10 !text-white/50' : ''}`}>
