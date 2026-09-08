@@ -211,7 +211,7 @@ func VerifyFirebaseIDToken(ctx context.Context, idToken, expectedProjectID strin
 	if err != nil {
 		return nil, fmt.Errorf("tokeninfo request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)

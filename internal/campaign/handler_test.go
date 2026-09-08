@@ -229,7 +229,7 @@ func TestCampaign_SetLive_OwnershipCheck(t *testing.T) {
 	creatorID := uuid.New()
 	attackerID := uuid.New()
 
-	c, _ := store.Create(nil, NewCampaign{CreatorID: creatorID, Title: "Indie Doc"})
+	c, _ := store.Create(context.Background(), NewCampaign{CreatorID: creatorID, Title: "Indie Doc"})
 
 	r := gin.New()
 	r.POST("/campaigns/:id/publish", func(c *gin.Context) {
@@ -278,7 +278,7 @@ func TestCampaign_AddTier_OwnershipCheck(t *testing.T) {
 	creatorID := uuid.New()
 	attackerID := uuid.New()
 
-	c, _ := store.Create(nil, NewCampaign{CreatorID: creatorID, Title: "Animation Short"})
+	c, _ := store.Create(context.Background(), NewCampaign{CreatorID: creatorID, Title: "Animation Short"})
 
 	r := gin.New()
 	r.POST("/campaigns/:id/tiers", func(ctx *gin.Context) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -133,7 +134,7 @@ func TestJWTAuthMiddleware_BearerHeader(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"caller_id": callerID.String()})
 	})
 
-	req := httptest.NewRequest("GET", "/test-auth", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-auth", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -164,7 +165,7 @@ func TestJWTAuthMiddleware_Cookie(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"caller_id": callerID.String()})
 	})
 
-	req := httptest.NewRequest("GET", "/test-cookie", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-cookie", nil)
 	req.AddCookie(&http.Cookie{Name: "cf_at", Value: token})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -181,7 +182,7 @@ func TestRequireAuth_Unauthorized(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	req := httptest.NewRequest("POST", "/protected", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

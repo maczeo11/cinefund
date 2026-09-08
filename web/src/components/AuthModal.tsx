@@ -54,7 +54,7 @@ export function getRegisteredUsers(): UserProfile[] {
 export function saveRegisteredUser(user: UserProfile) {
   try {
     const list = getRegisteredUsers()
-    const idx = list.findIndex(u => u.id === user.id || u.email.toLowerCase() === user.email.toLowerCase())
+    const idx = list.findIndex(u => u.id === user.id || (u.email && user.email && u.email.toLowerCase() === user.email.toLowerCase()))
     if (idx >= 0) {
       list[idx] = user
     } else {
@@ -149,51 +149,57 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
       const { user, idToken } = await signInWithGoogle()
       const assignedRole: UserRole = selectedRole || (tab === 'signup' ? signUpRole : 'CREATOR')
 
-      // Sync with Go backend if online
-      let backendUserId = ''
-      let sessionToken = idToken
-      try {
-        const resp = await fetch('/api/v1/auth/firebase', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id_token: idToken,
-            role: assignedRole,
-          }),
-        })
-        if (resp.ok) {
-          const data = await resp.json()
-          backendUserId = data.user?.id
-          sessionToken = data.token || idToken
-        }
-      } catch (e) {
-        console.warn('Backend auth sync warning (continuing with client auth):', e)
-      }
-
       const googleProfile: UserProfile = {
-        id: backendUserId || user.uid,
+        id: user.uid,
         name: user.displayName || user.email?.split('@')[0] || 'Google Cinephile',
         email: user.email || '',
         role: assignedRole,
         avatar: user.photoURL || (user.displayName?.[0] || 'G').toUpperCase(),
         photoURL: user.photoURL || undefined,
         tag: assignedRole === 'CREATOR' ? 'Google Verified Filmmaker' : 'Google Verified Patron',
-        token: sessionToken,
+        token: idToken,
       }
 
+      // 1. Immediately activate user session so UI is fast and responsive
       saveRegisteredUser(googleProfile)
       setCurrent(googleProfile)
       setActiveUser(googleProfile)
       setAuthSuccess(`Welcome, ${googleProfile.name}! Signed in via Google.`)
+
+      // 2. Non-blocking asynchronous sync to PostgreSQL backend
+      fetch('/api/v1/auth/firebase', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id_token: idToken,
+          role: assignedRole,
+        }),
+      })
+        .then(async resp => {
+          if (resp.ok) {
+            const data = await resp.json()
+            if (data.token) {
+              googleProfile.token = data.token
+              if (data.user?.id) googleProfile.id = data.user.id
+              saveRegisteredUser(googleProfile)
+              setActiveUser(googleProfile)
+            }
+          }
+        })
+        .catch(e => {
+          console.warn('Backend user sync skipped (continuing in client mode):', e)
+        })
+
+      // 3. Close the modal smoothly after showing success
       setTimeout(() => {
         onClose()
-      }, 500)
+      }, 250)
     } catch (err: any) {
       console.error('Google Sign-In error:', err)
       if (err?.code === 'auth/popup-closed-by-user') {
-        setSignInError('Google sign-in was closed.')
+        setSignInError('Google sign-in was closed before completion.')
       } else if (err?.code === 'auth/unauthorized-domain') {
-        setSignInError('This domain is not yet authorized in Firebase Console -> Authentication -> Settings -> Authorized domains.')
+        setSignInError('Domain authorization required: please add cinefund.vercel.app under Firebase Console -> Authentication -> Settings -> Authorized domains.')
       } else {
         setSignInError(err?.message || 'Google sign-in failed. Please try again.')
       }
@@ -338,11 +344,14 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="text-silver-dim hover:text-white transition-colors h-8 w-8 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] flex items-center justify-center text-sm"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.08] hover:bg-white/[0.18] text-silver hover:text-white transition-all text-xs font-mono font-semibold border border-white/15 hover:border-amber/40 active:scale-95 shadow-sm cursor-pointer"
             aria-label="Close modal"
           >
-            ✕
+            <span className="text-amber">✕</span>
+            <span>Close</span>
+            <span className="text-[10px] text-silver-faint px-1 py-0.2 bg-black/40 rounded border border-white/10 hidden sm:inline font-normal">ESC</span>
           </button>
         </div>
 
@@ -387,9 +396,71 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
         <div className="p-6 overflow-y-auto space-y-5">
           {/* Success Banner */}
           {authSuccess && (
-            <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center gap-2.5 animate-fadeIn">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>{authSuccess}</span>
+            <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-emerald-300 text-xs font-mono flex items-center justify-between gap-2.5 animate-fadeIn">
+              <div className="flex items-center gap-2.5">
+                <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span>{authSuccess}</span>
+              </div>
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-2.5 py-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 text-xs font-semibold transition-colors cursor-pointer"
+              >
+                Close ✕
+              </button>
+            </div>
+          )}
+
+          {/* Active Logged-In User Card with instant Exit / Continue Button */}
+          {current && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-amber/10 via-black/50 to-transparent border border-amber/35 space-y-3 shadow-inner">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono text-amber uppercase tracking-wider font-semibold flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Active Authenticated Identity
+                </span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber/20 text-amber font-bold border border-amber/30 uppercase">
+                  {current.role}
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-base flex items-center justify-center overflow-hidden flex-shrink-0 shadow-[0_0_12px_rgba(229,169,60,0.3)]">
+                  {current.photoURL || (current.avatar && current.avatar.startsWith('http')) ? (
+                    <img src={current.photoURL || current.avatar} alt={current.name} className="w-full h-full object-cover" />
+                  ) : (
+                    current.avatar
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h4 className="font-bold text-silver text-sm truncate">{current.name}</h4>
+                  <p className="text-[11px] font-mono text-silver-dim truncate">{current.email}</p>
+                  <p className="text-[10px] text-silver-faint truncate">{current.tag}</p>
+                </div>
+              </div>
+
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-amber hover:bg-amber-bright text-ink font-cinema font-bold text-xs shadow-[0_0_15px_rgba(229,169,60,0.3)] hover:shadow-[0_0_20px_rgba(229,169,60,0.5)] transition-all active:scale-[0.98] flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <span>✓</span>
+                  <span>Continue to CineFund / Close [ESC]</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout()
+                    setCurrent(null)
+                    setAuthSuccess('Signed out of session.')
+                  }}
+                  className="px-3 py-2.5 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/10 hover:border-crimson/40 text-silver-dim hover:text-crimson font-mono text-xs transition-colors cursor-pointer"
+                  title="Sign out of current account"
+                >
+                  Sign Out
+                </button>
+              </div>
             </div>
           )}
 
@@ -783,9 +854,10 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 rounded-lg bg-white/10 text-silver hover:bg-white/20 text-xs transition-colors"
+              className="px-3.5 py-1.5 rounded-lg bg-amber hover:bg-amber-bright text-ink font-cinema font-bold text-xs transition-all cursor-pointer shadow-[0_0_10px_rgba(229,169,60,0.25)] flex items-center gap-1.5 active:scale-95"
             >
-              Close
+              <span>✕</span>
+              <span>Exit Modal</span>
             </button>
           </div>
         </div>
