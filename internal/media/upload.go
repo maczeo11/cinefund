@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/maczeo11/cinefund/internal/media/transcode"
+	"github.com/maczeo11/cinefund/internal/platform/errs"
 	"github.com/maczeo11/cinefund/internal/platform/objectstore"
 )
 
@@ -64,6 +65,19 @@ func (s *UploadStore) Get(ctx context.Context, id uuid.UUID) (*Asset, error) {
 	return &a, nil
 }
 
+// CheckCampaignOwner returns true if the campaign exists and its creator_id matches ownerID.
+func (s *UploadStore) CheckCampaignOwner(ctx context.Context, campaignID, ownerID uuid.UUID) (bool, error) {
+	if s.pool == nil {
+		return true, nil
+	}
+	var creatorID uuid.UUID
+	err := s.pool.QueryRow(ctx, `SELECT creator_id FROM campaigns WHERE id = $1`, campaignID).Scan(&creatorID)
+	if err != nil {
+		return false, err
+	}
+	return creatorID == ownerID, nil
+}
+
 // PresignPut signs a browser PUT for the asset's storage key.
 func (s *UploadStore) PresignPut(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return s.obj.PresignedPut(ctx, key, ttl)
@@ -78,8 +92,25 @@ func (s *UploadStore) MarkUploaded(ctx context.Context, assetID uuid.UUID) error
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE media_assets SET status = 'UPLOADED' WHERE id = $1`, assetID); err != nil {
+		var sizeBytes int64
+		if s.obj != nil {
+			sz, _, err := s.obj.Stat(ctx, key)
+			if err != nil {
+				return fmt.Errorf("stat uploaded object: %w", err)
+			}
+			if sz > MaxUploadBytes {
+				return errs.Invalid("FILE_TOO_LARGE", "uploaded object size exceeds maximum 500MB")
+			}
+			sizeBytes = sz
+		}
+		if sizeBytes > 0 {
+			_, err = tx.Exec(ctx, `
+				UPDATE media_assets SET status = 'UPLOADED', size_bytes = $2 WHERE id = $1`, assetID, sizeBytes)
+		} else {
+			_, err = tx.Exec(ctx, `
+				UPDATE media_assets SET status = 'UPLOADED' WHERE id = $1`, assetID)
+		}
+		if err != nil {
 			return err
 		}
 		return insertOutbox(ctx, tx, "media.uploaded", assetID, map[string]any{

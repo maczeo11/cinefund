@@ -6,9 +6,35 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/maczeo11/cinefund/internal/platform/errs"
 )
+
+const (
+	CallerIDKey = "caller_id"
+	ClaimsKey   = "jwt_claims"
+)
+
+// SetCallerID sets the authenticated caller's UUID in the gin context.
+func SetCallerID(c *gin.Context, id uuid.UUID) {
+	c.Set(CallerIDKey, id)
+}
+
+// CallerID retrieves the authenticated caller's UUID from the gin context.
+func CallerID(c *gin.Context) (uuid.UUID, bool) {
+	if v, exists := c.Get(CallerIDKey); exists {
+		if id, ok := v.(uuid.UUID); ok && id != uuid.Nil {
+			return id, true
+		}
+	}
+	if v, exists := c.Get("user_id"); exists {
+		if id, ok := v.(uuid.UUID); ok && id != uuid.Nil {
+			return id, true
+		}
+	}
+	return uuid.Nil, false
+}
 
 // ErrorResponse is the JSON shape for errors.
 type ErrorResponse struct {

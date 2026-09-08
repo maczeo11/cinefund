@@ -218,10 +218,25 @@ const DEMO_TIERS: Record<string, Tier[]> = {
 
 async function request<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
   const { method = 'GET', body } = opts
+  const headers: Record<string, string> = {}
+  if (body) {
+    headers['Content-Type'] = 'application/json'
+  }
+  try {
+    const userStr = localStorage.getItem('cinefund_current_user')
+    if (userStr && userStr !== 'null') {
+      const u = JSON.parse(userStr)
+      if (u?.id) {
+        headers['X-User-ID'] = u.id
+      }
+    }
+  } catch {
+    // ignore
+  }
   try {
     const res = await fetch(BASE + path, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     })
     if (!res.ok) {

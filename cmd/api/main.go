@@ -61,11 +61,26 @@ func main() {
 	}
 	r := gin.New()
 	r.Use(gin.Recovery())
-	// CORS — live backend only, allow all origins (Vercel preview + localhost) — frontend forwards to live data only, no mock
+	// Security Headers
+	r.Use(func(c *gin.Context) {
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Next()
+	})
+
+	// CORS — restricted origins
 	r.Use(cors.New(cors.Config{
-		AllowAllOrigins: true,
-		AllowMethods: []string{"GET", "POST", "OPTIONS"},
-		AllowHeaders: []string{"Content-Type", "Authorization"},
+		AllowOrigins: []string{
+			"https://cinefund.vercel.app",
+			"http://localhost:5173",
+			"http://localhost:3000",
+			"http://127.0.0.1:5173",
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With", "Origin", "X-User-ID"},
+		AllowCredentials: true,
 	}))
 	r.Use(httpx.Middleware(log))
 
@@ -132,7 +147,11 @@ func main() {
 
 	uploadStore := media.NewUploadStore(pg, objStore)
 
+	authMW := JWTAuthMiddleware(cfg.JWT.AccessSecret)
+	requireAuth := RequireAuth()
+
 	api := r.Group("/api/v1")
+	api.Use(authMW)
 	{
 		// public config for frontend (razorpay key id, etc.)
 		api.GET("/config", func(c *gin.Context) {
@@ -143,19 +162,19 @@ func main() {
 
 		campH := campaign.NewHandler(campaignStore)
 		api.GET("/campaigns", campH.List)
-		api.POST("/campaigns", campH.Create)
+		api.POST("/campaigns", requireAuth, campH.Create)
 		api.GET("/campaigns/:id", campH.Get)
-		api.POST("/campaigns/:id/publish", campH.SetLive)
+		api.POST("/campaigns/:id/publish", requireAuth, campH.SetLive)
 		api.GET("/campaigns/:id/tiers", campH.Tiers)
-		api.POST("/campaigns/:id/tiers", campH.AddTier)
+		api.POST("/campaigns/:id/tiers", requireAuth, campH.AddTier)
 
 		pledgeH := pledge.NewHandler(pledgeSvc)
 		api.POST("/campaigns/:id/pledges", pledgeH.CreatePledge)
 		api.POST("/pledges/:id/confirm", pledgeH.Confirm)
 
 		mediaH := media.NewHandler(uploadStore, media.NewJobRepo(pg))
-		api.POST("/uploads", mediaH.Presign)
-		api.POST("/uploads/:id/complete", mediaH.Complete)
+		api.POST("/uploads", requireAuth, mediaH.Presign)
+		api.POST("/uploads/:id/complete", requireAuth, mediaH.Complete)
 	}
 	r.POST("/webhooks/razorpay", pledge.NewHandler(pledgeSvc).Webhook)
 
