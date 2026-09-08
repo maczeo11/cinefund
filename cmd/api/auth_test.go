@@ -204,7 +204,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 		c.Status(http.StatusOK)
 	})
 
-	req := httptest.NewRequest("GET", "/test-sec", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/test-sec", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -243,7 +243,7 @@ func TestCORS_RestrictedOrigins(t *testing.T) {
 	})
 
 	// 1. Allowed origin
-	req := httptest.NewRequest("GET", "/cors-test", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/cors-test", nil)
 	req.Header.Set("Origin", "https://cinefund.vercel.app")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -252,7 +252,7 @@ func TestCORS_RestrictedOrigins(t *testing.T) {
 	}
 
 	// 2. Disallowed origin
-	req2 := httptest.NewRequest("GET", "/cors-test", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), "GET", "/cors-test", nil)
 	req2.Header.Set("Origin", "https://malicious.evil.com")
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
@@ -261,7 +261,7 @@ func TestCORS_RestrictedOrigins(t *testing.T) {
 	}
 
 	// 3. Preflight OPTIONS request with X-User-ID
-	req3 := httptest.NewRequest("OPTIONS", "/cors-test", nil)
+	req3 := httptest.NewRequestWithContext(context.Background(), "OPTIONS", "/cors-test", nil)
 	req3.Header.Set("Origin", "http://localhost:5173")
 	req3.Header.Set("Access-Control-Request-Method", "POST")
 	req3.Header.Set("Access-Control-Request-Headers", "Content-Type, X-User-ID")
@@ -289,7 +289,7 @@ func TestPublicRoute_ExpiredTokenDoesNotBlock(t *testing.T) {
 	})
 
 	// 1. With expired cookie
-	req := httptest.NewRequest("GET", "/public-endpoint", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "GET", "/public-endpoint", nil)
 	req.AddCookie(&http.Cookie{Name: "cf_at", Value: expiredToken})
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -298,7 +298,7 @@ func TestPublicRoute_ExpiredTokenDoesNotBlock(t *testing.T) {
 	}
 
 	// 2. With expired Bearer token
-	req2 := httptest.NewRequest("GET", "/public-endpoint", nil)
+	req2 := httptest.NewRequestWithContext(context.Background(), "GET", "/public-endpoint", nil)
 	req2.Header.Set("Authorization", "Bearer "+expiredToken)
 	w2 := httptest.NewRecorder()
 	r.ServeHTTP(w2, req2)
@@ -320,7 +320,7 @@ func TestRequireAuth_ExpiredTokenBlocks(t *testing.T) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
-	req := httptest.NewRequest("POST", "/protected-endpoint", nil)
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected-endpoint", nil)
 	req.Header.Set("Authorization", "Bearer "+expiredToken)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
