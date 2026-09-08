@@ -1,8 +1,11 @@
-# Environment
+# Environment & Secrets
 .env
 .env.local
 *.env
 !.env.example
+*.pem
+*serviceAccount*.json
+*firebase*.json
 AGENTS.md
 # Build output
 /bin/
