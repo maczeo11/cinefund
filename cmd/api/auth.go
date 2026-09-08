@@ -1,12 +1,16 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -15,6 +19,7 @@ import (
 
 	"github.com/maczeo11/cinefund/internal/platform/errs"
 	"github.com/maczeo11/cinefund/internal/platform/httpx"
+	"github.com/maczeo11/cinefund/internal/platform/postgres"
 )
 
 // JWTClaims holds parsed access token claims.
@@ -176,3 +181,145 @@ func RequireAuth() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+// FirebaseTokenInfo holds claims returned by Google's tokeninfo endpoint.
+type FirebaseTokenInfo struct {
+	Audience      string `json:"aud"`
+	Subject       string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified string `json:"email_verified"`
+	Name          string `json:"name"`
+	Picture       string `json:"picture"`
+	ExpiresIn     string `json:"expires_in"`
+}
+
+// VerifyFirebaseIDToken calls Google's public tokeninfo endpoint to verify a Firebase ID token.
+func VerifyFirebaseIDToken(ctx context.Context, idToken, expectedProjectID string) (*FirebaseTokenInfo, error) {
+	cleanToken := strings.TrimSpace(idToken)
+	if cleanToken == "" {
+		return nil, errors.New("empty id_token")
+	}
+
+	reqURL := "https://oauth2.googleapis.com/tokeninfo?id_token=" + url.QueryEscape(cleanToken)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create tokeninfo request: %w", err)
+	}
+
+	client := &http.Client{Timeout: 6 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("tokeninfo request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("invalid token (status %d): %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var info FirebaseTokenInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode tokeninfo: %w", err)
+	}
+
+	if expectedProjectID != "" && info.Audience != expectedProjectID {
+		return nil, fmt.Errorf("token audience mismatch: expected %s, got %s", expectedProjectID, info.Audience)
+	}
+
+	return &info, nil
+}
+
+// FirebaseAuthRequest defines the payload expected by POST /api/v1/auth/firebase.
+type FirebaseAuthRequest struct {
+	IDToken string `json:"id_token"`
+	Role    string `json:"role"`
+}
+
+// HandleFirebaseAuth verifies the Firebase ID token, upserts the user in PostgreSQL, and returns a session JWT.
+func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var body FirebaseAuthRequest
+		if err := c.ShouldBindJSON(&body); err != nil {
+			httpx.Abort(c, errs.Invalid("INVALID_BODY", "id_token is required"))
+			return
+		}
+
+		info, err := VerifyFirebaseIDToken(c.Request.Context(), body.IDToken, projectID)
+		if err != nil {
+			httpx.Abort(c, errs.Unauthorized("INVALID_TOKEN", "failed to verify Firebase Google token: %v", err))
+			return
+		}
+
+		// Deterministic UUID based on Firebase sub (Google UID)
+		userID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("firebase:"+info.Subject))
+
+		displayName := strings.TrimSpace(info.Name)
+		if len(displayName) < 2 {
+			if strings.Contains(info.Email, "@") {
+				displayName = strings.Split(info.Email, "@")[0]
+			} else {
+				displayName = "Cinema Patron"
+			}
+		}
+		if len(displayName) > 60 {
+			displayName = displayName[:60]
+		}
+
+		emailVerified := strings.EqualFold(info.EmailVerified, "true")
+
+		const query = `
+			INSERT INTO users (id, email, password_hash, display_name, role, email_verified, avatar_key, status)
+			VALUES ($1, $2, 'firebase_oauth', $3, 'USER', $4, $5, 'ACTIVE')
+			ON CONFLICT (email) DO UPDATE SET
+				display_name = EXCLUDED.display_name,
+				avatar_key = EXCLUDED.avatar_key,
+				email_verified = EXCLUDED.email_verified,
+				updated_at = now()
+			RETURNING id, email, display_name, role, avatar_key;
+		`
+
+		var (
+			dbID     uuid.UUID
+			dbEmail  string
+			dbName   string
+			dbRole   string
+			dbAvatar *string
+		)
+
+		err = pool.QueryRow(c.Request.Context(), query, userID, info.Email, displayName, emailVerified, info.Picture).
+			Scan(&dbID, &dbEmail, &dbName, &dbRole, &dbAvatar)
+		if err != nil {
+			_ = c.Error(fmt.Errorf("upsert user in postgres: %w", err))
+			return
+		}
+
+		appRole := "CREATOR"
+		if strings.EqualFold(body.Role, "BACKER") {
+			appRole = "BACKER"
+		}
+
+		token, err := GenerateJWT(dbID, appRole, jwtSecret, 7*24*time.Hour)
+		if err != nil {
+			_ = c.Error(fmt.Errorf("generate jwt: %w", err))
+			return
+		}
+
+		avatarOut := info.Picture
+		if dbAvatar != nil && *dbAvatar != "" {
+			avatarOut = *dbAvatar
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"token": token,
+			"user": gin.H{
+				"id":     dbID.String(),
+				"email":  dbEmail,
+				"name":   dbName,
+				"role":   appRole,
+				"avatar": avatarOut,
+			},
+		})
+	}
+}
+

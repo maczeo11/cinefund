@@ -226,6 +226,9 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown 
     const userStr = localStorage.getItem('cinefund_current_user')
     if (userStr && userStr !== 'null') {
       const u = JSON.parse(userStr)
+      if (u?.token) {
+        headers['Authorization'] = `Bearer ${u.token}`
+      }
       if (u?.id) {
         headers['X-User-ID'] = u.id
       }

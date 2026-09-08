@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { signInWithGoogle, signOutFirebase } from '../firebase'
 
 export type UserRole = 'CREATOR' | 'BACKER' | 'ADMIN'
 
@@ -9,6 +10,8 @@ export type UserProfile = {
   role: UserRole
   avatar: string
   tag: string
+  photoURL?: string
+  token?: string
 }
 
 export const DEMO_USERS: UserProfile[] = [
@@ -85,6 +88,7 @@ export function setActiveUser(user: UserProfile | null) {
 }
 
 export function logout() {
+  signOutFirebase()
   setActiveUser(null)
 }
 
@@ -134,7 +138,69 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
 
-  if (!isOpen) return null
+  const [isGoogleLoading, setIsGoogleLoading] = useState(false)
+
+  async function handleGoogleSignIn(selectedRole?: UserRole) {
+    try {
+      setIsGoogleLoading(true)
+      setSignInError(null)
+      setSignUpError(null)
+
+      const { user, idToken } = await signInWithGoogle()
+      const assignedRole: UserRole = selectedRole || (tab === 'signup' ? signUpRole : 'CREATOR')
+
+      // Sync with Go backend if online
+      let backendUserId = ''
+      let sessionToken = idToken
+      try {
+        const resp = await fetch('/api/v1/auth/firebase', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id_token: idToken,
+            role: assignedRole,
+          }),
+        })
+        if (resp.ok) {
+          const data = await resp.json()
+          backendUserId = data.user?.id
+          sessionToken = data.token || idToken
+        }
+      } catch (e) {
+        console.warn('Backend auth sync warning (continuing with client auth):', e)
+      }
+
+      const googleProfile: UserProfile = {
+        id: backendUserId || user.uid,
+        name: user.displayName || user.email?.split('@')[0] || 'Google Cinephile',
+        email: user.email || '',
+        role: assignedRole,
+        avatar: user.photoURL || (user.displayName?.[0] || 'G').toUpperCase(),
+        photoURL: user.photoURL || undefined,
+        tag: assignedRole === 'CREATOR' ? 'Google Verified Filmmaker' : 'Google Verified Patron',
+        token: sessionToken,
+      }
+
+      saveRegisteredUser(googleProfile)
+      setCurrent(googleProfile)
+      setActiveUser(googleProfile)
+      setAuthSuccess(`Welcome, ${googleProfile.name}! Signed in via Google.`)
+      setTimeout(() => {
+        onClose()
+      }, 500)
+    } catch (err: any) {
+      console.error('Google Sign-In error:', err)
+      if (err?.code === 'auth/popup-closed-by-user') {
+        setSignInError('Google sign-in was closed.')
+      } else if (err?.code === 'auth/unauthorized-domain') {
+        setSignInError('This domain is not yet authorized in Firebase Console -> Authentication -> Settings -> Authorized domains.')
+      } else {
+        setSignInError(err?.message || 'Google sign-in failed. Please try again.')
+      }
+    } finally {
+      setIsGoogleLoading(false)
+    }
+  }
 
   function handleQuickDemoSelect(user: UserProfile) {
     setCurrent(user)
@@ -399,6 +465,22 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
                 </div>
               </div>
 
+              {/* Google Sign-In */}
+              <button
+                type="button"
+                onClick={() => handleGoogleSignIn()}
+                disabled={isGoogleLoading}
+                className="w-full py-2.5 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 hover:border-amber/50 text-silver hover:text-white transition-all flex items-center justify-center gap-3 font-mono text-xs shadow-sm hover:shadow-[0_0_15px_rgba(229,169,60,0.15)] disabled:opacity-50 cursor-pointer"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z" />
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z" />
+                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.03 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                </svg>
+                <span className="font-semibold">{isGoogleLoading ? 'Connecting to Google...' : 'Continue with Google'}</span>
+              </button>
+
               {/* Divider */}
               <div className="flex items-center gap-3 my-4 text-xs font-mono text-silver-faint">
                 <div className="flex-1 h-[1px] bg-white/[0.08]" />
@@ -480,7 +562,30 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
 
           {/* TAB 2: CREATE ACCOUNT */}
           {tab === 'signup' && (
-            <form onSubmit={handleSignUpSubmit} className="space-y-4">
+            <div className="space-y-4">
+              {/* Google Sign-Up */}
+              <button
+                type="button"
+                onClick={() => handleGoogleSignIn(signUpRole)}
+                disabled={isGoogleLoading}
+                className="w-full py-2.5 px-4 rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/15 hover:border-amber/50 text-silver hover:text-white transition-all flex items-center justify-center gap-3 font-mono text-xs shadow-sm hover:shadow-[0_0_15px_rgba(229,169,60,0.15)] disabled:opacity-50 cursor-pointer"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                  <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z" />
+                  <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.35 24 12 24z" />
+                  <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 10.03 0 12s.45 3.82 1.25 5.42l4.03-3.15z" />
+                  <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" />
+                </svg>
+                <span className="font-semibold">{isGoogleLoading ? 'Connecting to Google...' : 'Sign up with Google'}</span>
+              </button>
+
+              <div className="flex items-center gap-3 my-2 text-xs font-mono text-silver-faint">
+                <div className="flex-1 h-[1px] bg-white/[0.08]" />
+                <span>OR FILL OUT CREDENTIALS</span>
+                <div className="flex-1 h-[1px] bg-white/[0.08]" />
+              </div>
+
+              <form onSubmit={handleSignUpSubmit} className="space-y-4">
               <div>
                 <label className="block text-xs font-mono text-silver-dim mb-1.5" htmlFor="signup-name">
                   Full Name / Director Moniker
@@ -611,7 +716,8 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
                 </p>
               </div>
             </form>
-          )}
+          </div>
+        )}
 
           {/* TAB 3: ARCHITECTURE */}
           {tab === 'architecture' && (

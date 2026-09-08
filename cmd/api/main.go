@@ -160,6 +160,9 @@ func main() {
 			})
 		})
 
+		// Firebase Google Auth exchange & PostgreSQL user sync
+		api.POST("/auth/firebase", HandleFirebaseAuth(pg, cfg.JWT.AccessSecret, "cinefund-82d88"))
+
 		campH := campaign.NewHandler(campaignStore)
 		api.GET("/campaigns", campH.List)
 		api.POST("/campaigns", requireAuth, campH.Create)

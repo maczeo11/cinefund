@@ -132,8 +132,12 @@ export default function Navbar({ onHome, onCreate }: Props) {
                 aria-expanded={dropdownOpen}
               >
                 {/* User Avatar */}
-                <div className="h-6 w-6 rounded-full bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-xs flex items-center justify-center shadow-inner">
-                  {user.avatar}
+                <div className="h-6 w-6 rounded-full bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-xs flex items-center justify-center shadow-inner overflow-hidden flex-shrink-0">
+                  {user.photoURL || (user.avatar && user.avatar.startsWith('http')) ? (
+                    <img src={user.photoURL || user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                  ) : (
+                    user.avatar
+                  )}
                 </div>
 
                 {/* Name */}
@@ -169,8 +173,12 @@ export default function Navbar({ onHome, onCreate }: Props) {
                   {/* User Profile Card */}
                   <div className="p-3 rounded-xl bg-black/40 border border-white/[0.08] space-y-2">
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-base flex items-center justify-center shadow-[0_0_12px_rgba(229,169,60,0.3)]">
-                        {user.avatar}
+                      <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-base flex items-center justify-center shadow-[0_0_12px_rgba(229,169,60,0.3)] overflow-hidden flex-shrink-0">
+                        {user.photoURL || (user.avatar && user.avatar.startsWith('http')) ? (
+                          <img src={user.photoURL || user.avatar} alt={user.name} className="w-full h-full object-cover" />
+                        ) : (
+                          user.avatar
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
