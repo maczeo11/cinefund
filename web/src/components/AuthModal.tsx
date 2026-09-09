@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { signInWithGoogle, signOutFirebase } from '../firebase'
 
 export type UserRole = 'CREATOR' | 'BACKER' | 'ADMIN'
@@ -140,6 +140,29 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
 
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
 
+  // Track pending auto-close timers so a stale timeout can't close a
+  // freshly reopened modal, and so we don't call onClose after unmount.
+  const closeTimer = useRef<number | null>(null)
+
+  function scheduleClose(ms: number) {
+    if (closeTimer.current !== null) {
+      window.clearTimeout(closeTimer.current)
+    }
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = null
+      onClose()
+    }, ms)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (closeTimer.current !== null) {
+        window.clearTimeout(closeTimer.current)
+        closeTimer.current = null
+      }
+    }
+  }, [])
+
   async function handleGoogleSignIn(selectedRole?: UserRole) {
     try {
       setIsGoogleLoading(true)
@@ -191,9 +214,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
         })
 
       // 3. Close the modal smoothly after showing success
-      setTimeout(() => {
-        onClose()
-      }, 250)
+      scheduleClose(250)
     } catch (err: any) {
       console.error('Google Sign-In error:', err)
       if (err?.code === 'auth/popup-closed-by-user') {
@@ -212,9 +233,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
     setCurrent(user)
     setActiveUser(user)
     setAuthSuccess(`Welcome, ${user.name}! Switched to ${user.role} profile.`)
-    setTimeout(() => {
-      onClose()
-    }, 450)
+    scheduleClose(450)
   }
 
   function handleSignInSubmit(e: React.FormEvent) {
@@ -238,9 +257,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
       setCurrent(matched)
       setActiveUser(matched)
       setAuthSuccess(`Authenticated as ${matched.name}!`)
-      setTimeout(() => {
-        onClose()
-      }, 500)
+      scheduleClose(500)
     } else {
       // Auto-provision demo account for recruiter testing with entered email
       const namePart = emailTrim.split('@')[0]
@@ -259,9 +276,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
       setCurrent(newUser)
       setActiveUser(newUser)
       setAuthSuccess(`Welcome to CineFund, ${newUser.name}!`)
-      setTimeout(() => {
-        onClose()
-      }, 500)
+      scheduleClose(500)
     }
   }
 
@@ -298,10 +313,13 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
     setCurrent(newUser)
     setActiveUser(newUser)
     setAuthSuccess(`Account created! Welcome, ${newUser.name}.`)
-    setTimeout(() => {
-      onClose()
-    }, 550)
+    scheduleClose(550)
   }
+
+  // Don't render anything when closed — without this guard the overlay
+  // stays mounted forever and onClose() (incl. the post-Google-login
+  // auto-close) can never dismiss it.
+  if (!isOpen) return null
 
   return (
     <div
@@ -844,7 +862,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
                   logout()
                   setCurrent(null)
                   setAuthSuccess('Signed out of session.')
-                  setTimeout(() => onClose(), 400)
+                  scheduleClose(400)
                 }}
                 className="px-3 py-1.5 rounded-lg border border-crimson/30 bg-crimson/10 hover:bg-crimson/20 text-crimson text-xs transition-colors"
               >
