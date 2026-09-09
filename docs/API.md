@@ -205,3 +205,44 @@ Returns 200 `{"status": "queued"}`.
 
 Returns 404 if the asset doesn't exist, 409 if it's not in PENDING_UPLOAD
 status.
+
+---
+
+## Playback (private-bucket HLS)
+
+The object-storage bucket is private: browsers never get raw S3 URLs. The API
+serves only playlists (a few KB of text, `Cache-Control: no-store`) while
+video bytes stream straight from storage over short-lived presigned URLs
+(10-minute TTL), so a link copied out of DevTools dies within minutes.
+
+### GET /api/v1/campaigns/:id/video (public)
+
+Returns the newest READY asset for a campaign, if any:
+
+```json
+{
+  "asset_id": "uuid",
+  "status": "READY",
+  "master_url": "/api/v1/videos/<asset_id>/master.m3u8"
+}
+```
+
+Returns `{"asset_id": null, "status": "NONE"}` when the campaign has no
+watchable reel yet.
+
+### GET /api/v1/videos/:id/master.m3u8 (auth)
+
+Serves the master playlist with variant references rewritten to the
+API-relative endpoints below, so every subsequent playlist fetch also passes
+auth. Players must send auth on playlist requests: hls.js via an
+`xhrSetup` Bearer header (same-origin only — S3 rejects requests that mix a
+presigned query string with an `Authorization` header), Safari native playback
+via the `cf_at` cookie the API already accepts.
+
+Returns 404 for unknown assets, 409 while the video is not READY.
+
+### GET /api/v1/videos/:id/variants/:rung/index.m3u8 (auth)
+
+Serves one variant playlist with every `seg_*.ts` line replaced by a
+short-lived presigned URL. `:rung` must be a rendition recorded on the asset
+(e.g. `720p`); anything else returns 400/404.

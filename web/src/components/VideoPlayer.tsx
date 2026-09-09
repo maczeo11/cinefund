@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { getAuthToken } from '../api'
 
 const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1'
 
@@ -14,12 +15,34 @@ declare global {
   }
 }
 
-function attachHls(video: HTMLVideoElement, src: string, onFatal: () => void): unknown {
+function isSameOrigin(url: string): boolean {
+  try {
+    return new URL(url, window.location.href).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+function attachHls(video: HTMLVideoElement, src: string, onFatal: () => void, withAuth: boolean): unknown {
   if (!window.Hls?.isSupported()) {
     video.src = src
     return null
   }
-  const hls = new window.Hls({ capLevelToPlayerSize: true })
+  // Auth-gated playlists (private bucket) need the Bearer token on playlist
+  // fetches. Segment URLs are presigned S3 links on another origin, so the
+  // header is only attached same-origin: S3 rejects requests that mix a
+  // presigned query string with an Authorization header.
+  const hls = new window.Hls({
+    capLevelToPlayerSize: true,
+    xhrSetup: withAuth
+      ? (xhr: XMLHttpRequest, url: string) => {
+          if (isSameOrigin(url)) {
+            const token = getAuthToken()
+            if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+          }
+        }
+      : undefined,
+  })
   hls.loadSource(src)
   hls.attachMedia(video)
   hls.on(window.Hls.Events.ERROR, (_: unknown, data: { fatal: boolean }) => {
@@ -28,9 +51,9 @@ function attachHls(video: HTMLVideoElement, src: string, onFatal: () => void): u
   return hls
 }
 
-type Props = { src: string; poster?: string; title?: string }
+type Props = { src: string; poster?: string; title?: string; withAuth?: boolean }
 
-export default function VideoPlayer({ src, poster, title }: Props) {
+export default function VideoPlayer({ src, poster, title, withAuth = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,7 +68,7 @@ export default function VideoPlayer({ src, poster, title }: Props) {
       return
     }
     if (window.Hls) {
-      const hls = attachHls(video, src, fail) as { destroy?: () => void } | null
+      const hls = attachHls(video, src, fail, withAuth) as { destroy?: () => void } | null
       return () => hls?.destroy?.()
     }
 
@@ -54,7 +77,7 @@ export default function VideoPlayer({ src, poster, title }: Props) {
     script.src = HLS_CDN
     script.async = true
     script.onload = () => {
-      hls = attachHls(video, src, fail) as { destroy?: () => void }
+      hls = attachHls(video, src, fail, withAuth) as { destroy?: () => void }
     }
     script.onerror = () => {
       video.src = src
@@ -65,7 +88,7 @@ export default function VideoPlayer({ src, poster, title }: Props) {
       hls?.destroy?.()
       script.remove()
     }
-  }, [src])
+  }, [src, withAuth])
 
   function play() {
     videoRef.current?.play().catch(() => setError('Playback could not start.'))

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
+import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, getCampaignVideo, playbackMasterUrl, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
 import { getActiveUser, type UserProfile } from './AuthModal.tsx'
@@ -25,6 +25,9 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [videoSrc, setVideoSrc] = useState<string>(() => {
     return localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM
   })
+  // True when the reel streams from the auth-gated playback API (private
+  // bucket + short-lived segment URLs) instead of the public fallback.
+  const [videoAuth, setVideoAuth] = useState(false)
 
   const [uploadFile, setUploadFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -45,6 +48,27 @@ export default function CampaignDetail({ id, onBack }: Props) {
       .catch(err => setError(`Live backend error: ${(err as Error).message} — check VITE_API_BASE`))
       .finally(() => setLoading(false))
   }, [id, refresh])
+
+  // Prefer the protected transcode output when the backend has a READY reel
+  // for this campaign; otherwise keep the local/demo fallback.
+  useEffect(() => {
+    let cancelled = false
+    setVideoAuth(false)
+    setVideoSrc(localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM)
+    getCampaignVideo(id)
+      .then(v => {
+        if (!cancelled && v.status === 'READY' && v.asset_id) {
+          setVideoSrc(playbackMasterUrl(v.asset_id))
+          setVideoAuth(true)
+        }
+      })
+      .catch(() => {
+        // Backend unreachable or no reel yet — keep the fallback source.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [id])
 
   const [activeUser, setActiveUser] = useState<UserProfile | null>(getActiveUser())
 
@@ -255,7 +279,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
           </div>
 
           <div className="bg-black/85 p-2 sm:p-3 rounded-2xl border border-white/10 mb-4 shadow-[0_0_30px_rgba(0,0,0,0.6)]">
-            <VideoPlayer src={videoSrc} title={`${campaign.title} — Workprint Reel`} />
+            <VideoPlayer src={videoSrc} withAuth={videoAuth} title={`${campaign.title} — Workprint Reel`} />
           </div>
 
           {/* S3 Direct Video Uploader */}

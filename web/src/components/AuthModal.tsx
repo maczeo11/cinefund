@@ -84,7 +84,26 @@ export function setActiveUser(user: UserProfile | null) {
   } else {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(user))
   }
+  syncAccessTokenCookie(user)
   window.dispatchEvent(new Event('cinefund_auth_change'))
+}
+
+// Mirror the JWT access token into the cf_at cookie the Go API already
+// accepts (see JWTAuthMiddleware). Browser-native HLS playback (Safari, which
+// has no hls.js/XHR hook) cannot attach an Authorization header, but cookies
+// go out automatically on the same-origin playlist fetches. Lifetime matches
+// the 15-minute access token; cleared on sign-out.
+function syncAccessTokenCookie(user: UserProfile | null) {
+  try {
+    if (typeof document === 'undefined') return
+    if (user?.token) {
+      document.cookie = `cf_at=${encodeURIComponent(user.token)}; Path=/; SameSite=Lax; Max-Age=900`
+    } else {
+      document.cookie = 'cf_at=; Path=/; Max-Age=0'
+    }
+  } catch {
+    // ignore (non-browser / restricted contexts)
+  }
 }
 
 export function logout() {

@@ -2,7 +2,10 @@ package media
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/google/uuid"
@@ -81,6 +84,75 @@ func (s *UploadStore) CheckCampaignOwner(ctx context.Context, campaignID, ownerI
 // PresignPut signs a browser PUT for the asset's storage key.
 func (s *UploadStore) PresignPut(ctx context.Context, key string, ttl time.Duration) (string, error) {
 	return s.obj.PresignedPut(ctx, key, ttl)
+}
+
+// PlaybackAsset is the subset of media_assets the playback flow touches.
+type PlaybackAsset struct {
+	ID              uuid.UUID
+	Status          string
+	MasterKey       string
+	PipelineVersion int
+	Rungs           []PlaybackRung
+}
+
+// PlaybackRung is one decoded entry of the renditions JSONB column.
+type PlaybackRung struct {
+	Name string `json:"name"`
+	Key  string `json:"key"`
+}
+
+// GetPlaybackAsset returns one asset with its rendition list for playback.
+func (s *UploadStore) GetPlaybackAsset(ctx context.Context, id uuid.UUID) (*PlaybackAsset, error) {
+	var a PlaybackAsset
+	var masterKey *string
+	var renditions []byte
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, status, master_key, pipeline_version, COALESCE(renditions, '[]'::jsonb)
+		  FROM media_assets WHERE id = $1`, id).
+		Scan(&a.ID, &a.Status, &masterKey, &a.PipelineVersion, &renditions)
+	if err != nil {
+		return nil, err
+	}
+	if masterKey != nil {
+		a.MasterKey = *masterKey
+	}
+	if err := json.Unmarshal(renditions, &a.Rungs); err != nil {
+		return nil, fmt.Errorf("decode renditions for asset %s: %w", id, err)
+	}
+	return &a, nil
+}
+
+// LatestReadyAssetByCampaign returns the newest READY asset for a campaign,
+// or (nil, nil) when the campaign has no watchable reel yet.
+func (s *UploadStore) LatestReadyAssetByCampaign(ctx context.Context, campaignID uuid.UUID) (*PlaybackAsset, error) {
+	var id uuid.UUID
+	err := s.pool.QueryRow(ctx, `
+		SELECT id FROM media_assets
+		 WHERE campaign_id = $1 AND status = 'READY'
+		 ORDER BY created_at DESC LIMIT 1`, campaignID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return s.GetPlaybackAsset(ctx, id)
+}
+
+// GetObject fetches a private object (used for playlists, never segments).
+func (s *UploadStore) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.obj == nil {
+		return nil, fmt.Errorf("object store not configured")
+	}
+	return s.obj.Get(ctx, key)
+}
+
+// PresignPublicGet signs a browser-reachable GET for a private object.
+func (s *UploadStore) PresignPublicGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	if s.obj == nil {
+		return "", fmt.Errorf("object store not configured")
+	}
+	return s.obj.PresignedGetPublic(ctx, key, ttl)
 }
 
 // MarkUploaded verifies the object exists and flips the row to UPLOADED.

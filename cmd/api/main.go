@@ -178,6 +178,13 @@ func main() {
 		mediaH := media.NewHandler(uploadStore, media.NewJobRepo(pg))
 		api.POST("/uploads", requireAuth, mediaH.Presign)
 		api.POST("/uploads/:id/complete", requireAuth, mediaH.Complete)
+
+		// Auth-gated HLS playback: the bucket stays private, the API serves
+		// only playlists, and every segment URL is short-lived.
+		playbackH := media.NewPlaybackHandler(uploadStore)
+		api.GET("/campaigns/:id/video", playbackH.CampaignVideo)
+		api.GET("/videos/:id/master.m3u8", requireAuth, playbackH.Master)
+		api.GET("/videos/:id/variants/:rung/index.m3u8", requireAuth, playbackH.Variant)
 	}
 	r.POST("/webhooks/razorpay", pledge.NewHandler(pledgeSvc).Webhook)
 

@@ -6,6 +6,42 @@ const BASE = (import.meta.env.VITE_API_BASE as string) || '/api/v1'
 
 export const getApiBase = () => BASE
 
+const AUTH_STORAGE_KEY = 'cinefund_current_user'
+
+function readStoredUser(): { token?: string; id?: string } | null {
+  try {
+    const userStr = localStorage.getItem(AUTH_STORAGE_KEY)
+    if (userStr && userStr !== 'null') {
+      return JSON.parse(userStr)
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+// getAuthToken returns the current JWT access token, if any. Used by the HLS
+// player to authenticate playlist fetches against the private-bucket playback
+// endpoints (native playback relies on the cf_at cookie instead).
+export function getAuthToken(): string | null {
+  return readStoredUser()?.token || null
+}
+
+export type CampaignVideo = {
+  asset_id: string | null
+  status: string
+  master_url?: string
+}
+
+export const getCampaignVideo = (campaignId: string): Promise<CampaignVideo> =>
+  request<CampaignVideo>(`/campaigns/${campaignId}/video`)
+
+// playbackMasterUrl points the HLS player at the auth-gated master playlist.
+// Playlists require auth; the segments they reference are short-lived
+// presigned S3 URLs that expire within minutes if copied out of DevTools.
+export const playbackMasterUrl = (assetId: string): string =>
+  `${BASE}/videos/${assetId}/master.m3u8`
+
 export type Campaign = {
   id: string
   creator_id: string
@@ -223,15 +259,12 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown 
     headers['Content-Type'] = 'application/json'
   }
   try {
-    const userStr = localStorage.getItem('cinefund_current_user')
-    if (userStr && userStr !== 'null') {
-      const u = JSON.parse(userStr)
-      if (u?.token) {
-        headers['Authorization'] = `Bearer ${u.token}`
-      }
-      if (u?.id) {
-        headers['X-User-ID'] = u.id
-      }
+    const u = readStoredUser()
+    if (u?.token) {
+      headers['Authorization'] = `Bearer ${u.token}`
+    }
+    if (u?.id) {
+      headers['X-User-ID'] = u.id
     }
   } catch {
     // ignore
