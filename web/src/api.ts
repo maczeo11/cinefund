@@ -85,7 +85,7 @@ export type Config = {
   razorpay_key_id: string
 }
 
-export const FALLBACK_POSTER_SVG = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="800" height="450" viewBox="0 0 800 450"><defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="%230B0D13"/><stop offset="50%" stop-color="%23181D2C"/><stop offset="100%" stop-color="%230B0D13"/></linearGradient></defs><rect width="800" height="450" fill="url(%23g)"/><circle cx="400" cy="200" r="64" fill="none" stroke="%23E5A93C" stroke-width="3" opacity="0.6"/><circle cx="400" cy="200" r="22" fill="%23E5A93C" opacity="0.4"/><circle cx="365" cy="200" r="12" fill="%230B0D13" stroke="%23E5A93C" stroke-width="2" opacity="0.7"/><circle cx="435" cy="200" r="12" fill="%230B0D13" stroke="%23E5A93C" stroke-width="2" opacity="0.7"/><circle cx="400" cy="165" r="12" fill="%230B0D13" stroke="%23E5A93C" stroke-width="2" opacity="0.7"/><circle cx="400" cy="235" r="12" fill="%230B0D13" stroke="%23E5A93C" stroke-width="2" opacity="0.7"/><text x="400" y="310" fill="%23E5A93C" font-family="Cinzel,serif" font-size="18" font-weight="bold" letter-spacing="4" text-anchor="middle">CINEFUND 35MM REEL</text><text x="400" y="335" fill="%238B95A5" font-family="monospace" font-size="11" letter-spacing="2" text-anchor="middle">CELLULOID VAULT</text></svg>`
+export const FALLBACK_POSTER_SVG = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI4MDAiIGhlaWdodD0iNDUwIiB2aWV3Qm94PSIwIDAgODAwIDQ1MCI+PGRlZnM+PGxpbmVhckdyYWRpZW50IGlkPSJnIiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj48c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjMEIwRDEzIi8+PHN0b3Agb2Zmc2V0PSI1MCUiIHN0b3AtY29sb3I9IiMxODFEMkMiLz48c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiMwQjBEMTMiLz48L2xpbmVhckdyYWRpZW50PjwvZGVmcz48cmVjdCB3aWR0aD0iODAwIiBoZWlnaHQ9IjQ1MCIgZmlsbD0idXJsKCNnKSIvPjxjaXJjbGUgY3g9IjQwMCIgY3k9IjIwMCIgcj0iNjQiIGZpbGw9Im5vbmUiIHN0cm9rZT0iI0U1QTkzQyIgc3Ryb2tlLXdpZHRoPSIzIiBvcGFjaXR5PSIwLjYiLz48Y2lyY2xlIGN4PSI0MDAiIGN5PSIyMDAiIHI9IjIyIiBmaWxsPSIjRTVBOTNDIiBvcGFjaXR5PSIwLjQiLz48Y2lyY2xlIGN4PSIzNjUiIGN5PSIyMDAiIHI9IjEyIiBmaWxsPSIjMEIwRDEzIiBzdHJva2U9IiNFNUE5M0MiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PGNpcmNsZSBjeD0iNDM1IiBjeT0iMjAwIiByPSIxMiIgZmlsbD0iIzBCMEQxMyIgc3Ryb2tlPSIjRTVBOTNDIiBzdHJva2Utd2lkdGg9IjIiIG9wYWNpdHk9IjAuNyIvPjxjaXJjbGUgY3g9IjQwMCIgY3k9IjE2NSIgcj0iMTIiIGZpbGw9IiMwQjBEMTMiIHN0cm9rZT0iI0U1QTkzQyIgc3Ryb2tlLXdpZHRoPSIyIiBvcGFjaXR5PSIwLjciLz48Y2lyY2xlIGN4PSI0MDAiIGN5PSIyMzUiIHI9IjEyIiBmaWxsPSIjMEIwRDEzIiBzdHJva2U9IiNFNUE5M0MiIHN0cm9rZS13aWR0aD0iMiIgb3BhY2l0eT0iMC43Ii8+PHRleHQgeD0iNDAwIiB5PSIzMTAiIGZpbGw9IiNFNUE5M0MiIGZvbnQtZmFtaWx5PSJzYW5zLXNlcmlmIiBmb250LXNpemU9IjE4IiBmb250LXdlaWdodD0iYm9sZCIgbGV0dGVyLXNwYWNpbmc9IjQiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkNJTkVGVU5EIDM1TU0gUkVFTDwvdGV4dD48dGV4dCB4PSI0MDAiIHk9IjMzNSIgZmlsbD0iIzhCOTVBNSIgZm9udC1mYW1pbHk9Im1vbm9zcGFjZSIgZm9udC1zaXplPSIxMSIgbGV0dGVyLXNwYWNpbmc9IjIiIHRleHQtYW5jaG9yPSJtaWRkbGUiPkNFTExVTE9JRCBWQVVMVDwvdGV4dD48L3N2Zz4='
 
 export const GENRE_POSTERS: Record<string, string> = {
   DRAMA: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=80',
@@ -143,8 +143,8 @@ export const POSTER_PRESETS = [
 ]
 
 export function getPosterForCampaign(campaign?: { poster_url?: string; cover_key?: string; category?: string } | null): string {
-  if (campaign?.poster_url) return campaign.poster_url
-  if (campaign?.cover_key && (campaign.cover_key.startsWith('http') || campaign.cover_key.startsWith('/'))) return campaign.cover_key
+  if (campaign?.poster_url && campaign.poster_url.trim().length > 0) return campaign.poster_url.trim()
+  if (campaign?.cover_key && (campaign.cover_key.startsWith('http') || campaign.cover_key.startsWith('/'))) return campaign.cover_key.trim()
   const cat = (campaign?.category || 'DRAMA').toUpperCase()
   return GENRE_POSTERS[cat] || GENRE_POSTERS.DRAMA
 }

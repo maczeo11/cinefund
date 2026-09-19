@@ -243,6 +243,17 @@ export default function CampaignDetail({ id, onBack }: Props) {
 
   const poster = getPosterForCampaign(campaign)
 
+  const isCreator = Boolean(
+    activeUser && (
+      activeUser.id === campaign.creator_id ||
+      activeUser.role === 'CREATOR'
+    )
+  )
+
+  const directorName = campaign.creator_name ||
+    (activeUser && activeUser.id === campaign.creator_id ? activeUser.name :
+     campaign.creator_id === '00000000-0000-0000-0000-000000000001' ? 'Ava Chen Studio' : 'Independent Director')
+
   return (
     <div className="py-2 animate-fadeIn">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -274,10 +285,10 @@ export default function CampaignDetail({ id, onBack }: Props) {
       </div>
 
       {/* Cinematic Hero Backdrop Banner */}
-      <div className="relative w-full h-56 sm:h-72 md:h-80 rounded-2xl overflow-hidden mb-6 border border-white/[0.1] shadow-2xl bg-black group">
+      <div className="relative w-full h-56 sm:h-72 md:h-80 rounded-2xl overflow-hidden mb-6 border border-white/[0.1] shadow-2xl bg-[#0B0D13] group">
         <img
           src={poster}
-          alt={`${campaign.title} backdrop`}
+          alt={campaign.title}
           onError={(e) => {
             e.currentTarget.onerror = null
             e.currentTarget.src = FALLBACK_POSTER_SVG
@@ -329,116 +340,104 @@ export default function CampaignDetail({ id, onBack }: Props) {
             <VideoPlayer src={videoSrc} withAuth={videoAuth} title={`${campaign.title} — Workprint Reel`} />
           </div>
 
-          {/* S3 Direct Video Uploader */}
-          <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-5 mb-8 space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-silver font-cinema tracking-wide">Upload Film or Trailer (.mp4)</h3>
-                <p className="text-xs text-silver-dim font-mono">Direct Browser-to-S3 Presigned Upload • Never touches API memory</p>
-              </div>
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono border border-amber/30 text-amber bg-amber/10">AWS S3 BUCKET</span>
-            </div>
-
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
-              <input
-                type="file"
-                accept="video/mp4,video/*"
-                onChange={(e) => {
-                  if (e.target.files && e.target.files[0]) {
-                    setUploadFile(e.target.files[0])
-                    setUploadSuccess(null)
-                    setUploadError(null)
-                  }
-                }}
-                className="file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-mono file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer text-xs text-silver"
-              />
-              <button
-                type="button"
-                onClick={handleVideoUpload}
-                disabled={!uploadFile || uploading}
-                className="px-4 py-2 rounded-lg bg-amber hover:bg-amber-light text-night font-bold text-xs transition-all disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap"
-              >
-                {uploading ? (uploadProgress !== null ? `Uploading: ${uploadProgress}%` : 'Presigning…') : 'Upload to AWS S3'}
-              </button>
-            </div>
-
-            {uploadFile && (
-              <p className="text-[11px] font-mono text-silver-faint">
-                Selected: <span className="text-white">{uploadFile.name}</span> ({(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)
-              </p>
-            )}
-
-            {uploadProgress !== null && (
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-[11px] font-mono text-amber">
-                  <span>Direct streaming to S3...</span>
-                  <span>{uploadProgress}%</span>
-                </div>
-                <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-amber transition-all duration-200"
-                    style={{ width: `${uploadProgress}%` }}
-                  />
-                </div>
-              </div>
-            )}
-
-            {uploadSuccess && <p className="text-xs font-mono text-emerald-400 bg-emerald-950/30 p-2.5 rounded border border-emerald-800/40">{uploadSuccess}</p>}
-            {uploadError && <p className="text-xs font-mono text-rose-400 bg-rose-950/30 p-2.5 rounded border border-rose-800/40">{uploadError}</p>}
-          </div>
-
-          {/* Film Synopsis with Theatrical Poster */}
-          <section className="section bg-celluloid border border-white/[0.08] p-5 sm:p-6 rounded-2xl mb-8">
-            <div className="flex flex-col sm:flex-row gap-5 sm:gap-6 items-start">
-              {/* Theatrical One-Sheet Poster Card */}
-              <div className="w-full sm:w-48 shrink-0 rounded-xl overflow-hidden border border-white/15 bg-black/60 shadow-xl group/poster">
-                <div className="aspect-[2/3] w-full relative overflow-hidden">
-                  <img
-                    src={poster}
-                    alt={`${campaign.title} poster artwork`}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null
-                      e.currentTarget.src = FALLBACK_POSTER_SVG
-                    }}
-                    className="w-full h-full object-cover group-hover/poster:scale-105 transition-transform duration-500"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-                  <div className="absolute bottom-2 left-2 right-2 text-center">
-                    <span className="text-[10px] font-mono uppercase tracking-widest text-amber font-bold px-2 py-0.5 rounded bg-black/80 backdrop-blur-md border border-amber/30 inline-block shadow">
-                      Film Poster
-                    </span>
+          {/* S3 Direct Video Uploader - Restricted to Creator */}
+          {isCreator && (
+            <div className="bg-amber/5 border border-amber/20 rounded-2xl p-5 mb-8 space-y-4 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="h-2 w-2 rounded-full bg-amber animate-pulse" />
+                    <h3 className="text-sm font-bold text-silver font-cinema tracking-wide">
+                      Director Studio — Video Master Upload
+                    </h3>
                   </div>
+                  <p className="text-xs text-silver-dim font-mono mt-0.5">
+                    Direct Browser-to-S3 Presigned Upload • Never touches API memory
+                  </p>
                 </div>
-                <div className="p-2.5 bg-black/60 border-t border-white/10 text-[10px] font-mono text-silver-dim space-y-1">
-                  <div className="flex justify-between">
-                    <span className="text-silver-faint">Stock:</span>
-                    <span className="text-silver font-medium">Kodak 5219</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-silver-faint">Scope:</span>
-                    <span className="text-silver font-medium">2.39:1 Anamorphic</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-silver-faint">Mix:</span>
-                    <span className="text-silver font-medium">Dolby Atmos</span>
-                  </div>
-                </div>
+                <span className="px-2.5 py-0.5 rounded text-[10px] font-mono border border-amber/30 text-amber bg-amber/10 font-semibold">
+                  CREATOR WORKBENCH
+                </span>
               </div>
 
-              {/* Synopsis Details */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <span className="h-2 w-2 rounded-full bg-amber" />
-                  <h2 className="font-cinema text-xl font-bold text-silver">Film Synopsis & Concept</h2>
-                </div>
-                <p className="text-sm sm:text-base text-silver-dim font-sans leading-relaxed mb-4">
-                  {campaign.synopsis || campaign.tagline}
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+                <input
+                  type="file"
+                  accept="video/mp4,video/*"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      setUploadFile(e.target.files[0])
+                      setUploadSuccess(null)
+                      setUploadError(null)
+                    }
+                  }}
+                  className="file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:text-xs file:font-mono file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer text-xs text-silver"
+                />
+                <button
+                  type="button"
+                  onClick={handleVideoUpload}
+                  disabled={!uploadFile || uploading}
+                  className="px-4 py-2 rounded-lg bg-amber hover:bg-amber-light text-night font-bold text-xs transition-all disabled:opacity-30 disabled:cursor-not-allowed whitespace-nowrap cursor-pointer"
+                >
+                  {uploading ? (uploadProgress !== null ? `Uploading: ${uploadProgress}%` : 'Presigning…') : 'Upload to AWS S3'}
+                </button>
+              </div>
+
+              {uploadFile && (
+                <p className="text-[11px] font-mono text-silver-faint">
+                  Selected: <span className="text-white">{uploadFile.name}</span> ({(uploadFile.size / (1024 * 1024)).toFixed(2)} MB)
                 </p>
-                <div className="border-t border-white/[0.06] pt-3 text-xs font-mono text-silver-faint flex flex-wrap gap-4">
-                  <span>Reel ID: <strong className="text-silver">{campaign.id.slice(0, 8)}…</strong></span>
-                  <span>Director: <strong className="text-silver">{campaign.creator_name || 'Ava Chen Studio'}</strong></span>
-                  <span>Escrow: <strong className="text-amber">PostgreSQL Ledger</strong></span>
+              )}
+
+              {uploadProgress !== null && (
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-[11px] font-mono text-amber">
+                    <span>Direct streaming to S3...</span>
+                    <span>{uploadProgress}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber transition-all duration-200"
+                      style={{ width: `${uploadProgress}%` }}
+                    />
+                  </div>
                 </div>
+              )}
+
+              {uploadSuccess && <p className="text-xs font-mono text-emerald-400 bg-emerald-950/30 p-2.5 rounded border border-emerald-800/40">{uploadSuccess}</p>}
+              {uploadError && <p className="text-xs font-mono text-rose-400 bg-rose-950/30 p-2.5 rounded border border-rose-800/40">{uploadError}</p>}
+            </div>
+          )}
+
+          {/* Film Synopsis & Concept */}
+          <section className="section bg-celluloid border border-white/[0.08] p-5 sm:p-7 rounded-2xl mb-8 shadow-lg">
+            <div className="flex items-center gap-2.5 mb-3.5">
+              <span className="h-2 w-2 rounded-full bg-amber shadow-[0_0_8px_rgba(229,169,60,0.6)]" />
+              <h2 className="font-cinema text-xl sm:text-2xl font-bold text-silver tracking-wide">
+                Film Synopsis & Concept
+              </h2>
+            </div>
+            <p className="text-sm sm:text-base text-silver-dim font-sans leading-relaxed mb-6 whitespace-pre-line">
+              {campaign.synopsis || campaign.tagline || 'No synopsis provided for this production yet.'}
+            </p>
+
+            {/* Metadata Badges Ribbon */}
+            <div className="border-t border-white/[0.08] pt-4 flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-mono">
+              <div className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-silver-dim flex items-center gap-1.5">
+                <span className="text-silver-faint">Reel ID:</span>
+                <span className="text-silver font-semibold">{campaign.id.slice(0, 8)}…</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-silver-dim flex items-center gap-1.5">
+                <span className="text-silver-faint">Director:</span>
+                <span className="text-silver font-semibold">{directorName}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-silver-dim flex items-center gap-1.5">
+                <span className="text-silver-faint">Category:</span>
+                <span className="text-silver font-semibold uppercase">{campaign.category || 'Cinema'}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-lg bg-amber/5 border border-amber/25 text-amber flex items-center gap-1.5">
+                <span className="text-amber/70">Escrow:</span>
+                <span className="font-semibold">PostgreSQL Ledger</span>
               </div>
             </div>
           </section>
@@ -505,9 +504,17 @@ export default function CampaignDetail({ id, onBack }: Props) {
               {/* Active Session Info Card */}
               <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-4 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="h-6 w-6 rounded-full bg-amber/20 text-amber font-cinema font-bold text-xs flex items-center justify-center shrink-0">
-                    {activeUser?.avatar || '👤'}
-                  </span>
+                  <div className="h-7 w-7 rounded-full bg-amber/20 text-amber font-cinema font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
+                    {activeUser?.photoURL || (activeUser?.avatar && activeUser.avatar.startsWith('http')) ? (
+                      <img
+                        src={activeUser.photoURL || activeUser.avatar}
+                        alt={activeUser.name}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <span>{activeUser?.avatar || (activeUser?.name ? activeUser.name[0].toUpperCase() : '👤')}</span>
+                    )}
+                  </div>
                   <div className="truncate">
                     <span className="text-silver font-medium block truncate">
                       {activeUser ? activeUser.name : 'Guest Visitor'}

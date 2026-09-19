@@ -95,12 +95,55 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
   }
 
   return (
-    <div className="frame rounded-lg overflow-hidden border border-white/10">
-      <video ref={videoRef} controls poster={poster} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />
+    <div className="frame rounded-lg overflow-hidden border border-white/10 relative group">
+      <video
+        ref={videoRef}
+        controls
+        poster={poster}
+        onPlay={() => setPlaying(true)}
+        onPause={() => setPlaying(false)}
+        className="w-full h-full object-cover"
+      />
       {!playing && !error && (
-        <div className="frame-cover" onClick={play}>
-          <span className="label bg-black/40 px-2 py-1 rounded">Play</span>
-          <span className="frame-cue">{title}</span>
+        <div
+          className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-black/40 flex flex-col justify-between p-4 sm:p-6 cursor-pointer group-hover:from-black/75 transition-all"
+          onClick={play}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault()
+              play()
+            }
+          }}
+          aria-label={title ? `Play ${title}` : 'Play video reel'}
+        >
+          {/* Top Reel Badge */}
+          <div className="flex items-center justify-between pointer-events-none">
+            <span className="px-2.5 py-1 rounded bg-black/75 backdrop-blur-md border border-amber/30 text-[10px] font-mono uppercase tracking-widest text-amber font-bold shadow">
+              35mm Workprint Reel
+            </span>
+          </div>
+
+          {/* Centered Glowing Play Icon */}
+          <div className="self-center my-auto pointer-events-none">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber text-night flex items-center justify-center shadow-[0_0_30px_rgba(229,169,60,0.5)] group-hover:scale-110 group-hover:bg-amber-bright transition-transform duration-300">
+              <svg className="w-6 h-6 sm:w-7 sm:h-7 translate-x-0.5 fill-current" viewBox="0 0 24 24">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </div>
+          </div>
+
+          {/* Bottom Title Bar */}
+          {title ? (
+            <div className="flex items-center gap-2 pointer-events-none">
+              <span className="text-white font-cinema text-sm sm:text-base font-medium tracking-wide truncate drop-shadow-md">
+                {title}
+              </span>
+            </div>
+          ) : (
+            <div />
+          )}
         </div>
       )}
       {error && <p className="frame-note">{error}</p>}

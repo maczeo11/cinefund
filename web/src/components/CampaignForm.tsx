@@ -157,8 +157,12 @@ export default function CampaignForm({ onDone }: Props) {
       {/* Session Identity Ribbon */}
       <div className="p-3 rounded-xl bg-[#12151E] border border-white/10 mb-6 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-8 w-8 rounded-lg bg-amber text-ink font-cinema font-bold text-xs flex items-center justify-center shrink-0">
-            {activeUser.avatar || 'A'}
+          <div className="h-8 w-8 rounded-lg bg-amber text-ink font-cinema font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden">
+            {activeUser.photoURL || (activeUser.avatar && activeUser.avatar.startsWith('http')) ? (
+              <img src={activeUser.photoURL || activeUser.avatar} alt={activeUser.name} className="w-full h-full object-cover" />
+            ) : (
+              activeUser.avatar || (activeUser.name ? activeUser.name[0].toUpperCase() : 'A')
+            )}
           </div>
           <div className="min-w-0">
             <span className="text-xs font-bold text-silver block truncate">

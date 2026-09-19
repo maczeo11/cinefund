@@ -81,8 +81,12 @@ export default function Pledges() {
 
         {activeUser && (
           <div className="p-3 rounded-xl bg-celluloid border border-white/10 flex items-center gap-3 self-start md:self-auto shadow-md">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-xs flex items-center justify-center">
-              {activeUser.avatar}
+            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-xs flex items-center justify-center overflow-hidden shrink-0">
+              {activeUser.photoURL || (activeUser.avatar && activeUser.avatar.startsWith('http')) ? (
+                <img src={activeUser.photoURL || activeUser.avatar} alt={activeUser.name} className="w-full h-full object-cover" />
+              ) : (
+                activeUser.avatar || (activeUser.name ? activeUser.name[0].toUpperCase() : '👤')
+              )}
             </div>
             <div>
               <span className="text-xs font-bold text-silver block">{activeUser.name}</span>
