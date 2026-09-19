@@ -5,6 +5,7 @@ import VideoPlayer from './VideoPlayer.tsx'
 import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
 
 const CINEMATIC_HLS_STREAM = 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
+const PRESET_AMOUNTS = [500, 1000, 2500, 5000] as const
 
 type Props = { id: string; onBack: () => void }
 type Phase = 'idle' | 'ordering' | 'paying' | 'confirming' | 'done'
@@ -22,6 +23,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [pledgeError, setPledgeError] = useState<string | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const [videoSrc, setVideoSrc] = useState<string>(() => {
     return localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM
@@ -86,6 +88,26 @@ export default function CampaignDetail({ id, onBack }: Props) {
     }
     setTier(t)
     setAmount(String(t.min_amount / 100))
+    setPledgeError(null)
+  }
+
+  async function handleShare() {
+    try {
+      if (navigator.clipboard) {
+        await navigator.clipboard.writeText(window.location.href)
+      } else {
+        const input = document.createElement('input')
+        input.value = window.location.href
+        document.body.appendChild(input)
+        input.select()
+        document.execCommand('copy')
+        document.body.removeChild(input)
+      }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2200)
+    } catch {
+      // ignore
+    }
   }
 
   async function confirm(pledgeId: string, checkout: unknown) {
@@ -223,12 +245,31 @@ export default function CampaignDetail({ id, onBack }: Props) {
 
   return (
     <div className="py-2 animate-fadeIn">
-      <div className="mb-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <button
           onClick={onBack}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] text-xs font-mono text-silver hover:text-amber transition-colors"
+          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.06] text-xs font-mono text-silver hover:text-amber transition-colors cursor-pointer"
         >
           ← Return to Film Vault
+        </button>
+
+        <button
+          type="button"
+          onClick={handleShare}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/15 hover:border-amber/40 bg-white/[0.04] hover:bg-white/[0.08] text-xs font-medium text-silver hover:text-amber transition-all cursor-pointer shadow-sm active:scale-95"
+          title="Share film with friends or backers"
+        >
+          {copied ? (
+            <>
+              <span className="text-emerald-400">✓</span>
+              <span className="text-emerald-400 font-semibold font-mono text-[11px]">Link Copied!</span>
+            </>
+          ) : (
+            <>
+              <span>🔗</span>
+              <span>Share Film</span>
+            </>
+          )}
         </button>
       </div>
 
@@ -411,13 +452,22 @@ export default function CampaignDetail({ id, onBack }: Props) {
                   return (
                     <li key={t.id} className="tier">
                       <button
-                        className="tier-btn"
+                        className={`tier-btn transition-all ${
+                          tier?.id === t.id ? '!border-amber bg-amber/10 shadow-[0_0_15px_rgba(229,169,60,0.15)] ring-1 ring-amber/50' : ''
+                        }`}
                         aria-pressed={tier?.id === t.id}
                         disabled={!!soldOut}
                         onClick={() => selectTier(t)}
                       >
                         <span className="tier-row">
-                          <span className="tier-name">{t.title}</span>
+                          <span className="tier-name flex items-center gap-2">
+                            <span>{t.title}</span>
+                            {tier?.id === t.id && (
+                              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber/20 text-amber font-bold border border-amber/40">
+                                ✓ SELECTED
+                              </span>
+                            )}
+                          </span>
                           <span className="tier-min num">{rupees(t.min_amount)}+</span>
                         </span>
                         {t.description && <span className="tier-desc">{t.description}</span>}
@@ -482,9 +532,48 @@ export default function CampaignDetail({ id, onBack }: Props) {
                 )}
               </div>
 
+              {/* Quick Pledge Amount Presets */}
+              <div className="space-y-1.5 mb-3">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[11px] font-mono text-silver-dim">
+                    Quick Preset:
+                  </span>
+                  {tier && (
+                    <span className="text-[10px] font-mono text-amber">
+                      Tier min: {rupees(tier.min_amount)}
+                    </span>
+                  )}
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {PRESET_AMOUNTS.map(preset => {
+                    const isSelected = amount === String(preset)
+                    return (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => {
+                          setAmount(String(preset))
+                          setPledgeError(null)
+                          if (tier && preset * 100 < tier.min_amount) {
+                            setTier(null)
+                          }
+                        }}
+                        className={`py-1.5 px-1 rounded-lg text-xs font-mono font-medium transition-all border cursor-pointer text-center ${
+                          isSelected
+                            ? '!border-amber bg-amber/20 text-amber font-bold shadow-[0_0_10px_rgba(229,169,60,0.25)]'
+                            : 'border-white/10 bg-black/40 text-silver-dim hover:border-amber/40 hover:text-silver'
+                        }`}
+                      >
+                        ₹{preset.toLocaleString('en-IN')}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+
               <div className="field">
                 <label className="label" htmlFor="amount">
-                  {tier ? `Backing ${tier.title}` : 'Pledge amount'}
+                  {tier ? `Backing ${tier.title}` : 'Custom pledge amount'}
                 </label>
                 <input id="amount" type="number" min={1} value={amount} onChange={e => setAmount(e.target.value)} placeholder="₹500" />
               </div>
