@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { createCampaign, publishCampaign, addTier, uploadVideoFileToS3, POSTER_PRESETS, getPosterForCampaign, FALLBACK_POSTER_SVG } from '../api'
 import { toPaise } from '../format'
-import { getActiveUser, setActiveUser, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
+import AuthModal, { getActiveUser, setActiveUser, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
 
 const CATEGORIES = ['DRAMA', 'COMEDY', 'DOCUMENTARY', 'ANIMATION', 'HORROR', 'SCIFI', 'EXPERIMENTAL'] as const
 
@@ -17,6 +17,7 @@ export default function CampaignForm({ onDone }: Props) {
   const [uploadStage, setUploadStage] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
 
   const [activeUser, setActiveUserLocal] = useState<UserProfile | null>(getActiveUser())
 
@@ -32,8 +33,8 @@ export default function CampaignForm({ onDone }: Props) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0]
-      if (file.size > 50 * 1024 * 1024) {
-        setError(`File is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Free Tier S3 Demo recommends files under 50MB.`)
+      if (file.size > 500 * 1024 * 1024) {
+        setError(`File is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum allowed upload size is 500MB.`)
       } else {
         setError(null)
       }
@@ -53,7 +54,7 @@ export default function CampaignForm({ onDone }: Props) {
     e.preventDefault()
     setError(null)
     if (!film.title || !film.tagline || !film.goal) {
-      setError('Title, tagline and goal are required.')
+      setError('Title, tagline, and funding goal are required.')
       return
     }
     setSubmitting(true)
@@ -63,7 +64,7 @@ export default function CampaignForm({ onDone }: Props) {
     const finalPoster = posterUrl.trim() || getPosterForCampaign({ category: film.category })
 
     try {
-      setUploadStage('Creating campaign record in Postgres...')
+      setUploadStage('Setting up campaign details...')
       const campaign = await createCampaign({
         creator_id: creatorId,
         creator_name: creatorName,
@@ -86,13 +87,13 @@ export default function CampaignForm({ onDone }: Props) {
 
       // If a video file was selected, upload directly to S3 via Presigned URL
       if (videoFile) {
-        setUploadStage('Requesting S3 Presigned URL & uploading directly...')
+        setUploadStage('Requesting S3 Presigned URL & uploading video...')
         setUploadProgress(0)
         await uploadVideoFileToS3(videoFile, creatorId, campaign.id, (pct) => {
           setUploadProgress(pct)
-          setUploadStage(`Uploading ${videoFile.name} to AWS S3: ${pct}%`)
+          setUploadStage(`Uploading ${videoFile.name} to S3: ${pct}%`)
         })
-        setUploadStage('Direct S3 upload verified. Queued FFmpeg HLS transcode worker.')
+        setUploadStage('Upload verified. Preparing release...')
       }
 
       await publishCampaign(campaign.id)
@@ -105,106 +106,150 @@ export default function CampaignForm({ onDone }: Props) {
     }
   }
 
-  return (
-    <div className="form-page max-w-2xl mx-auto py-2 animate-fadeIn">
-      {/* Session Identity Badge */}
-      <div className="p-3.5 rounded-2xl bg-celluloid border border-white/10 mb-6 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-sm flex items-center justify-center shrink-0 shadow">
-            {activeUser?.avatar || 'A'}
-          </div>
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-silver truncate">
-                {activeUser ? activeUser.name : 'Guest Director'}
-              </span>
-              <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber/20 text-amber font-semibold border border-amber/30">
-                {activeUser ? activeUser.role : 'DEMO MODE'}
-              </span>
-            </div>
-            <p className="text-[11px] font-mono text-silver-dim truncate">
-              {activeUser ? activeUser.email : 'Sign in or switch to Ava Chen below'}
-            </p>
-          </div>
+  // Guest State Guard: Prompt visitor to sign in or use demo
+  if (!activeUser) {
+    return (
+      <div className="max-w-md mx-auto py-16 text-center space-y-6 animate-fadeIn">
+        <div className="h-16 w-16 mx-auto rounded-2xl bg-amber/15 border border-amber/30 text-amber font-cinema text-3xl flex items-center justify-center shadow-lg">
+          🎬
+        </div>
+        <div className="space-y-2">
+          <h2 className="font-cinema text-2xl font-bold text-silver">
+            Launch Your Film Campaign
+          </h2>
+          <p className="text-xs text-silver-dim leading-relaxed">
+            Sign in or register to publish your project, upload master workprints, and receive backer funding.
+          </p>
         </div>
 
-        {(!activeUser || activeUser.role !== 'CREATOR') && (
+        <div className="space-y-2.5 pt-2">
+          <button
+            type="button"
+            onClick={() => setAuthModalOpen(true)}
+            className="w-full py-3 px-4 rounded-xl bg-amber hover:bg-amber-bright text-ink font-semibold text-sm transition-all shadow-md active:scale-95 cursor-pointer"
+          >
+            Sign In / Create Account
+          </button>
+
           <button
             type="button"
             onClick={() => {
               setActiveUser(DEMO_USERS[0])
               setActiveUserLocal(DEMO_USERS[0])
             }}
-            className="text-[11px] font-mono px-3 py-1.5 rounded-lg border border-amber/40 bg-amber/10 hover:bg-amber/20 text-amber transition-colors whitespace-nowrap"
+            className="w-full py-2.5 px-4 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-silver text-xs font-mono transition-all cursor-pointer"
           >
-            ⚡ Switch to Ava (Director)
+            ⚡ Test with Director Demo (Ava Chen)
           </button>
-        )}
+        </div>
+
+        <AuthModal
+          isOpen={authModalOpen}
+          onClose={() => setAuthModalOpen(false)}
+          initialTab="signin"
+        />
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto py-4 animate-fadeIn">
+      {/* Session Identity Ribbon */}
+      <div className="p-3 rounded-xl bg-[#12151E] border border-white/10 mb-6 flex items-center justify-between shadow-sm">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="h-8 w-8 rounded-lg bg-amber text-ink font-cinema font-bold text-xs flex items-center justify-center shrink-0">
+            {activeUser.avatar || 'A'}
+          </div>
+          <div className="min-w-0">
+            <span className="text-xs font-bold text-silver block truncate">
+              {activeUser.name}
+            </span>
+            <span className="text-[10px] font-mono text-silver-dim truncate block">
+              {activeUser.email}
+            </span>
+          </div>
+        </div>
+
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber/20 text-amber font-semibold uppercase">
+          {activeUser.role}
+        </span>
       </div>
 
-      <h1 className="font-cinema text-3xl font-extrabold text-silver mb-2">Launch a 35mm Reel</h1>
-      <p className="text-xs text-silver-dim font-mono mb-6">
-        PostgreSQL Outbox → Kafka Topic → MinIO/S3 Reel Transcode • Funds held in double-entry escrow
-      </p>
+      <div className="mb-6 space-y-1">
+        <h1 className="font-cinema text-3xl font-extrabold text-silver">Launch a Film Campaign</h1>
+        <p className="text-xs text-silver-dim">
+          Set up your story, funding goals, and workprint reel. Backer funds are safeguarded in double-entry escrow.
+        </p>
+      </div>
 
-      <form onSubmit={submit} className="form space-y-6">
-        <div className="tw-card !p-6 space-y-5">
-          <div className="field">
-            <label className="label" htmlFor="title">Film Title</label>
+      <form onSubmit={submit} className="space-y-6">
+        <div className="p-6 rounded-2xl bg-[#12151E] border border-white/10 space-y-5 shadow-lg">
+          <div>
+            <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="title">
+              Film Title
+            </label>
             <input
               id="title"
               name="title"
               value={film.title}
               onChange={set(film, setFilm)}
-              placeholder="e.g. The Silver Shutter"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+              placeholder="e.g. The Last Projectionist"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
             />
           </div>
 
-          <div className="field">
-            <label className="label" htmlFor="tagline">Logline / Tagline</label>
+          <div>
+            <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="tagline">
+              Logline / Tagline
+            </label>
             <input
               id="tagline"
               name="tagline"
               value={film.tagline}
               onChange={set(film, setFilm)}
-              placeholder="One line that sells the entire cinematic experience"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+              placeholder="One line that captures the soul of your film"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
             />
           </div>
 
-          <div className="field">
-            <label className="label" htmlFor="synopsis">Full Synopsis & Director's Statement</label>
+          <div>
+            <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="synopsis">
+              Full Synopsis & Director's Vision
+            </label>
             <textarea
               id="synopsis"
               name="synopsis"
               rows={4}
               value={film.synopsis}
               onChange={set(film, setFilm)}
-              placeholder="The story, the optical gear, camera package, and where the escrow budget will be deployed."
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+              placeholder="Describe your film's narrative, visual approach, and where production funds will be directed."
+              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
             />
           </div>
 
-          <div className="pair">
-            <div className="field">
-              <label className="label" htmlFor="category">Film Format & Genre</label>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="category">
+                Genre
+              </label>
               <select
                 id="category"
                 name="category"
                 value={film.category}
                 onChange={set(film, setFilm)}
-                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver focus:outline-none focus:border-amber"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver focus:outline-none focus:border-amber transition-all"
               >
                 {CATEGORIES.map(c => (
-                  <option key={c} value={c} className="bg-celluloid text-silver">
+                  <option key={c} value={c} className="bg-[#12151E] text-silver">
                     {c}
                   </option>
                 ))}
               </select>
             </div>
-            <div className="field">
-              <label className="label" htmlFor="goal">Production Goal (₹)</label>
+            <div>
+              <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="goal">
+                Funding Goal (₹)
+              </label>
               <input
                 id="goal"
                 name="goal"
@@ -213,19 +258,19 @@ export default function CampaignForm({ onDone }: Props) {
                 value={film.goal}
                 onChange={set(film, setFilm)}
                 placeholder="500000"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
               />
             </div>
           </div>
 
           {/* Cinematic Poster Artwork & Presets Section */}
-          <div className="field border-t border-white/[0.08] pt-5 space-y-3">
+          <div className="border-t border-white/[0.08] pt-5 space-y-3">
             <div className="flex items-center justify-between">
-              <label className="label" htmlFor="posterUrl">
-                Cinematic Poster Artwork (16:9 Landscape)
+              <label className="text-xs font-medium text-silver" htmlFor="posterUrl">
+                Poster Artwork (16:9 Landscape)
               </label>
               <span className="text-[10px] font-mono text-amber">
-                High-Resolution Visual Still
+                High-Resolution Preview
               </span>
             </div>
 
@@ -238,13 +283,13 @@ export default function CampaignForm({ onDone }: Props) {
                 setSelectedPresetId(null)
               }}
               placeholder="https://images.unsplash.com/... or choose preset below"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-xs font-mono text-silver placeholder-silver-faint focus:outline-none focus:border-amber transition-all"
             />
 
             {/* Curated Presets Grid */}
             <div>
-              <span className="text-[11px] font-mono text-silver-dim block mb-2">
-                Curated Cinema Poster Presets:
+              <span className="text-[11px] text-silver-dim block mb-2 font-mono">
+                Or select a curated visual style:
               </span>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 {POSTER_PRESETS.map(preset => {
@@ -254,7 +299,7 @@ export default function CampaignForm({ onDone }: Props) {
                       key={preset.id}
                       type="button"
                       onClick={() => handleSelectPreset(preset)}
-                      className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-1.5 group ${
+                      className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-1.5 group cursor-pointer ${
                         isSelected
                           ? 'border-amber bg-amber/15 shadow-[0_0_12px_rgba(229,169,60,0.25)] ring-1 ring-amber/50'
                           : 'border-white/10 bg-black/40 hover:border-white/25 hover:bg-white/[0.03]'
@@ -298,16 +343,16 @@ export default function CampaignForm({ onDone }: Props) {
                   }}
                   className="w-full h-full object-cover"
                 />
-                <div className="absolute inset-0 bg-gradient-to-t from-celluloid via-transparent to-transparent pointer-events-none" />
+                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
                 <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 backdrop-blur-md border border-white/20 text-[9px] font-mono text-silver">
-                  35MM CELLULOID
+                  35MM
                 </div>
                 <div className="absolute bottom-2 left-2 right-2">
                   <span className="font-cinema font-bold text-sm text-silver block truncate">
-                    {film.title || 'Untitled 35mm Reel'}
+                    {film.title || 'Untitled Film'}
                   </span>
                   <span className="text-[10px] font-mono text-amber uppercase">
-                    {film.category} • PREVIEW
+                    {film.category}
                   </span>
                 </div>
               </div>
@@ -315,46 +360,49 @@ export default function CampaignForm({ onDone }: Props) {
           </div>
 
           {/* Master Video Reel Upload */}
-          <div className="field border-t border-white/[0.08] pt-4">
-            <label className="label flex items-center justify-between" htmlFor="video">
-              <span>Master Film Reel or Teaser (.mp4) — Optional</span>
-              <span className="text-[11px] text-amber font-mono">Direct S3 Presigned Upload</span>
+          <div className="border-t border-white/[0.08] pt-4">
+            <label className="block text-xs font-medium text-silver mb-1" htmlFor="video">
+              Workprint Reel or Trailer (.mp4) — Optional
             </label>
             <input
               id="video"
               type="file"
               accept="video/mp4,video/*"
               onChange={handleFileChange}
-              className="file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-xs file:font-mono file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer text-sm text-silver"
+              className="file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-white/10 file:text-white hover:file:bg-white/20 cursor-pointer text-sm text-silver"
             />
             {videoFile && (
               <p className="text-xs text-silver mt-1.5 font-mono">
                 Selected: <span className="text-white">{videoFile.name}</span> ({(videoFile.size / (1024 * 1024)).toFixed(2)} MB)
               </p>
             )}
-            <p className="text-[11px] text-silver-dim mt-1 font-sans">
-              Bypasses API memory: streamed straight from browser to AWS S3 bucket, then triggers FFmpeg HLS transcode.
+            <p className="text-[11px] text-silver-dim mt-1">
+              Uploaded securely to private storage and encoded into multi-bitrate HLS streams.
             </p>
           </div>
         </div>
 
         {/* First Reward Tier */}
-        <fieldset className="fieldset tw-card !p-6">
-          <legend className="label">First Patron Reward Tier — Optional</legend>
-          <div className="pair">
-            <div className="field">
-              <label className="label" htmlFor="rtitle">Tier Title</label>
+        <div className="p-6 rounded-2xl bg-[#12151E] border border-white/10 space-y-4 shadow-lg">
+          <h3 className="font-semibold text-silver text-sm">First Backer Reward Tier — Optional</h3>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="rtitle">
+                Tier Title
+              </label>
               <input
                 id="rtitle"
                 name="title"
                 value={reward.title}
                 onChange={set(reward, setReward)}
-                placeholder="e.g. 35mm Mounted Frame Cell"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+                placeholder="e.g. Workprint Access & Digital Credit"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
               />
             </div>
-            <div className="field">
-              <label className="label" htmlFor="rmin">Pledge Minimum (₹)</label>
+            <div>
+              <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="rmin">
+                Minimum Pledge (₹)
+              </label>
               <input
                 id="rmin"
                 name="min"
@@ -363,22 +411,24 @@ export default function CampaignForm({ onDone }: Props) {
                 value={reward.min}
                 onChange={set(reward, setReward)}
                 placeholder="1000"
-                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
               />
             </div>
           </div>
-          <div className="field mt-3">
-            <label className="label" htmlFor="rdesc">Reward Deliverables</label>
+          <div>
+            <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="rdesc">
+              Reward Deliverables
+            </label>
             <input
               id="rdesc"
               name="description"
               value={reward.description}
               onChange={set(reward, setReward)}
-              placeholder="Physical workprint film frame, digital master 4K credit, invite to premiere"
-              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber"
+              placeholder="Online screening access, digital master credit, invite to premiere"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
             />
           </div>
-        </fieldset>
+        </div>
 
         {uploadStage && (
           <div className="p-4 rounded-xl bg-black/40 border border-white/10 space-y-2">
@@ -406,14 +456,14 @@ export default function CampaignForm({ onDone }: Props) {
         <div className="flex gap-3 pt-2">
           <button
             type="submit"
-            className="flex-1 py-3.5 rounded-xl bg-amber hover:bg-amber-bright text-ink font-cinema font-bold text-sm tracking-wider shadow-[0_0_25px_rgba(229,169,60,0.3)] transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="flex-1 py-3.5 rounded-xl bg-amber hover:bg-amber-bright text-ink font-cinema font-bold text-sm tracking-wider shadow-lg transition-all active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             disabled={submitting}
           >
-            {submitting ? (uploadStage ? 'Uploading to AWS S3…' : 'Publishing Film…') : 'Publish 35mm Film to Vault'}
+            {submitting ? (uploadStage ? 'Uploading Video…' : 'Publishing Campaign…') : 'Publish Campaign'}
           </button>
           <button
             type="button"
-            className="px-5 py-3.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-silver text-xs font-mono transition-colors"
+            className="px-5 py-3.5 rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-silver text-xs font-medium transition-colors cursor-pointer"
             onClick={onDone}
             disabled={submitting}
           >

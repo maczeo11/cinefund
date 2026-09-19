@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, getCampaignVideo, playbackMasterUrl, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
-import { getActiveUser, type UserProfile } from './AuthModal.tsx'
+import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
 
 const CINEMATIC_HLS_STREAM = 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
 
@@ -21,6 +21,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [message, setMessage] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
   const [pledgeError, setPledgeError] = useState<string | null>(null)
+  const [authModalOpen, setAuthModalOpen] = useState(false)
 
   const [videoSrc, setVideoSrc] = useState<string>(() => {
     return localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM
@@ -118,7 +119,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
       currency: pledge.currency || 'INR',
       name: 'CineFund',
       description: campaign?.title,
-      theme: { color: '#c8553d', backdrop_color: '#0b0b0c' },
+      theme: { color: '#E5A93C', backdrop_color: '#0C0E14' },
       handler: (response: unknown) => confirm(pledge.id, response),
       modal: {
         ondismiss: () => {
@@ -147,10 +148,15 @@ export default function CampaignDetail({ id, onBack }: Props) {
       setPledgeError(`${tier.title} starts at ${rupees(tier.min_amount)}.`)
       return
     }
+    const currentUser = getActiveUser()
+    if (!currentUser) {
+      setAuthModalOpen(true)
+      setPledgeError('Please sign in or select a demo account to back this film.')
+      return
+    }
     setPhase('ordering')
-    const activeUser = getActiveUser()
-    const backerId = activeUser?.id || '00000000-0000-0000-0000-000000000002'
-    const backerName = activeUser?.name || 'Film Patron'
+    const backerId = currentUser.id
+    const backerName = currentUser.name
     try {
       const pledge = await createPledge(id, {
         backer_id: backerId,
@@ -450,20 +456,30 @@ export default function CampaignDetail({ id, onBack }: Props) {
               <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-4 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="h-6 w-6 rounded-full bg-amber/20 text-amber font-cinema font-bold text-xs flex items-center justify-center shrink-0">
-                    {activeUser?.avatar || 'P'}
+                    {activeUser?.avatar || '👤'}
                   </span>
                   <div className="truncate">
                     <span className="text-silver font-medium block truncate">
-                      {activeUser ? activeUser.name : 'Film Patron'}
+                      {activeUser ? activeUser.name : 'Guest Visitor'}
                     </span>
                     <span className="text-[10px] font-mono text-silver-faint">
-                      {activeUser ? `${activeUser.role} Session` : 'Demo Backer'}
+                      {activeUser ? `${activeUser.role}` : 'Sign in to record pledge'}
                     </span>
                   </div>
                 </div>
-                <span className="text-[10px] font-mono text-amber border border-amber/30 px-1.5 py-0.5 rounded bg-amber/10">
-                  Escrow Verified
-                </span>
+                {!activeUser ? (
+                  <button
+                    type="button"
+                    onClick={() => setAuthModalOpen(true)}
+                    className="text-[10px] font-mono text-amber border border-amber/30 px-2 py-0.5 rounded bg-amber/10 hover:bg-amber/20 transition-colors cursor-pointer"
+                  >
+                    Sign In
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-mono text-amber border border-amber/30 px-1.5 py-0.5 rounded bg-amber/10">
+                    Verified
+                  </span>
+                )}
               </div>
 
               <div className="field">
@@ -478,14 +494,20 @@ export default function CampaignDetail({ id, onBack }: Props) {
               </div>
               {pledgeError && <p className="notice">{pledgeError}</p>}
               {phase === 'done' && <p className="notice notice-done">Recorded. Thank you for backing this one.</p>}
-              <button type="submit" className="btn btn-wide" disabled={busy}>
-                {busy ? busyLabel[phase as Exclude<Phase, 'idle' | 'done'>] : 'Back this film'}
+              <button type="submit" className="btn btn-wide cursor-pointer" disabled={busy}>
+                {busy ? busyLabel[phase as Exclude<Phase, 'idle' | 'done'>] : activeUser ? 'Back this film' : 'Sign in & Back this film'}
               </button>
-              <p className="text-[11px] text-white/40 text-center font-mono">🔒 Encrypted Escrow Checkout • Guaranteed Allocation</p>
+              <p className="text-[11px] text-white/40 text-center font-mono">🔒 Escrow Protected • Direct-to-Production</p>
             </form>
           )}
         </aside>
       </div>
+
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        initialTab="signin"
+      />
     </div>
   )
 }
