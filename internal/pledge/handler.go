@@ -23,8 +23,15 @@ func (h *Handler) CreatePledge(c *gin.Context) {
 		return
 	}
 
+	// The backer is always the authenticated caller; a backer_id in the body
+	// is ignored so nobody can pledge in someone else's name.
+	backerID, ok := httpx.CallerID(c)
+	if !ok {
+		httpx.Abort(c, errs.Unauthorized("UNAUTHORIZED", "authentication required"))
+		return
+	}
+
 	var body struct {
-		BackerID  uuid.UUID  `json:"backer_id"`
 		TierID    *uuid.UUID `json:"tier_id"`
 		Amount    int64      `json:"amount"`
 		Anonymous bool       `json:"anonymous"`
@@ -41,7 +48,7 @@ func (h *Handler) CreatePledge(c *gin.Context) {
 
 	pledge, err := h.svc.CreatePledge(c.Request.Context(), CreateInput{
 		CampaignID: campaignID,
-		BackerID:   body.BackerID,
+		BackerID:   backerID,
 		TierID:     body.TierID,
 		Amount:     body.Amount,
 		Anonymous:  body.Anonymous,
@@ -67,6 +74,11 @@ func (h *Handler) Confirm(c *gin.Context) {
 		httpx.Abort(c, errs.Invalid("INVALID_ID", "pledge id is not a uuid"))
 		return
 	}
+	callerID, ok := httpx.CallerID(c)
+	if !ok {
+		httpx.Abort(c, errs.Unauthorized("UNAUTHORIZED", "authentication required"))
+		return
+	}
 
 	var body struct {
 		OrderID   string `json:"razorpay_order_id"`
@@ -79,6 +91,7 @@ func (h *Handler) Confirm(c *gin.Context) {
 
 	status, err := h.svc.ConfirmPayment(c.Request.Context(), ConfirmInput{
 		PledgeID:  pledgeID,
+		CallerID:  callerID,
 		OrderID:   body.OrderID,
 		PaymentID: body.PaymentID,
 		Signature: body.Signature,

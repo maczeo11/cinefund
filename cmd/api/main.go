@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -70,18 +71,7 @@ func main() {
 		c.Next()
 	})
 
-	// CORS — restricted origins
-	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{
-			"https://cinefund.vercel.app",
-			"http://localhost:5173",
-			"http://localhost:3000",
-			"http://127.0.0.1:5173",
-		},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With", "Origin", "X-User-ID"},
-		AllowCredentials: true,
-	}))
+	r.Use(cors.New(corsConfig(cfg.Auth.AllowDevIdentityHeader)))
 	r.Use(httpx.Middleware(log))
 
 	// liveness — no deps, just proves the process is up
@@ -147,7 +137,10 @@ func main() {
 
 	uploadStore := media.NewUploadStore(pg, objStore)
 
-	authMW := JWTAuthMiddleware(cfg.JWT.AccessSecret)
+	if cfg.Auth.AllowDevIdentityHeader {
+		log.Warn("X-User-ID identity header accepted: development only")
+	}
+	authMW := JWTAuthMiddleware(cfg.JWT.AccessSecret, cfg.Auth.AllowDevIdentityHeader)
 	requireAuth := RequireAuth()
 
 	api := r.Group("/api/v1")
@@ -162,6 +155,10 @@ func main() {
 
 		// Firebase Google Auth exchange & PostgreSQL user sync
 		api.POST("/auth/firebase", HandleFirebaseAuth(pg, cfg.JWT.AccessSecret, "cinefund-82d88"))
+		if cfg.Auth.DemoLogin {
+			log.Info("demo login enabled")
+			api.POST("/auth/demo", HandleDemoAuth(pgDemoUsers{pool: pg}, cfg.JWT.AccessSecret))
+		}
 
 		campH := campaign.NewHandler(campaignStore)
 		api.GET("/campaigns", campH.List)
@@ -172,8 +169,8 @@ func main() {
 		api.POST("/campaigns/:id/tiers", requireAuth, campH.AddTier)
 
 		pledgeH := pledge.NewHandler(pledgeSvc)
-		api.POST("/campaigns/:id/pledges", pledgeH.CreatePledge)
-		api.POST("/pledges/:id/confirm", pledgeH.Confirm)
+		api.POST("/campaigns/:id/pledges", requireAuth, pledgeH.CreatePledge)
+		api.POST("/pledges/:id/confirm", requireAuth, pledgeH.Confirm)
 
 		mediaH := media.NewHandler(uploadStore, media.NewJobRepo(pg))
 		api.POST("/uploads", requireAuth, mediaH.Presign)
@@ -189,7 +186,7 @@ func main() {
 	r.POST("/webhooks/razorpay", pledge.NewHandler(pledgeSvc).Webhook)
 
 	srv := &http.Server{
-		Addr:              fmt.Sprintf(":%d", cfg.Port),
+		Addr:              net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
 	}

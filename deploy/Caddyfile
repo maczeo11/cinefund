@@ -1,0 +1,8 @@
+# TLS in front of the API on the EC2 host. Caddy obtains and renews a Let's
+# Encrypt certificate for API_DOMAIN on its own; ports 80 and 443 must be open.
+#
+# Without a domain of your own, <ip-with-dashes>.sslip.io resolves to the IP,
+# e.g. API_DOMAIN=43-205-27-169.sslip.io. See deploy/HTTPS.md.
+{$API_DOMAIN} {
+	reverse_proxy 127.0.0.1:{$API_PORT:8080}
+}

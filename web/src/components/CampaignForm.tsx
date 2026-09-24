@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { createCampaign, publishCampaign, addTier, uploadVideoFileToS3, POSTER_PRESETS, getPosterForCampaign, FALLBACK_POSTER_SVG } from '../api'
 import { toPaise } from '../format'
-import AuthModal, { getActiveUser, setActiveUser, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
+import AuthModal, { getActiveUser, signInAsDemo, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
 
 const CATEGORIES = ['DRAMA', 'COMEDY', 'DOCUMENTARY', 'ANIMATION', 'HORROR', 'SCIFI', 'EXPERIMENTAL'] as const
 
@@ -134,19 +134,21 @@ export default function CampaignForm({ onDone }: Props) {
           <button
             type="button"
             onClick={() => {
-              setActiveUser(DEMO_USERS[0])
-              setActiveUserLocal(DEMO_USERS[0])
+              setError(null)
+              signInAsDemo(DEMO_USERS[0])
+                .then(setActiveUserLocal)
+                .catch(err => setError((err as Error).message))
             }}
             className="w-full py-2.5 px-4 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-silver text-xs font-mono transition-all cursor-pointer"
           >
             ⚡ Test with Director Demo (Ava Chen)
           </button>
+          {error && <p className="text-xs text-crimson">{error}</p>}
         </div>
 
         <AuthModal
           isOpen={authModalOpen}
           onClose={() => setAuthModalOpen(false)}
-          initialTab="signin"
         />
       </div>
     )

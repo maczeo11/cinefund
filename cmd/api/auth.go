@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
@@ -21,6 +22,9 @@ import (
 	"github.com/maczeo11/cinefund/internal/platform/httpx"
 	"github.com/maczeo11/cinefund/internal/platform/postgres"
 )
+
+// sessionTTL is how long a token issued by the /auth endpoints stays valid.
+const sessionTTL = 7 * 24 * time.Hour
 
 // JWTClaims holds parsed access token claims.
 type JWTClaims struct {
@@ -128,8 +132,13 @@ func ParseAndValidateJWT(tokenStr, secret string) (*JWTClaims, error) {
 	return &claims, nil
 }
 
-// JWTAuthMiddleware parses JWT from Bearer header or cf_at cookie, with X-User-ID fallback.
-func JWTAuthMiddleware(secret string) gin.HandlerFunc {
+// JWTAuthMiddleware parses JWT from Bearer header or cf_at cookie.
+//
+// allowDevIdentityHeader additionally accepts a bare X-User-ID header when no
+// token is present. It is a local-development convenience only: config
+// validation refuses it outside APP_ENV=development, because any client can
+// set a header and would become whichever user it names.
+func JWTAuthMiddleware(secret string, allowDevIdentityHeader bool) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		tokenStr := ""
 		authHeader := c.GetHeader("Authorization")
@@ -155,7 +164,7 @@ func JWTAuthMiddleware(secret string) gin.HandlerFunc {
 			}
 		}
 
-		if _, ok := httpx.CallerID(c); !ok {
+		if _, ok := httpx.CallerID(c); !ok && allowDevIdentityHeader {
 			if devUserID := c.GetHeader("X-User-ID"); devUserID != "" {
 				if uid, err := uuid.Parse(devUserID); err == nil && uid != uuid.Nil {
 					httpx.SetCallerID(c, uid)
@@ -164,6 +173,27 @@ func JWTAuthMiddleware(secret string) gin.HandlerFunc {
 		}
 
 		c.Next()
+	}
+}
+
+// corsConfig restricts cross-origin access to the known web origins. The
+// X-User-ID header is only allowed through when the API is configured to read
+// it (see JWTAuthMiddleware).
+func corsConfig(allowDevIdentityHeader bool) cors.Config {
+	headers := []string{"Content-Type", "Authorization", "X-Requested-With", "Origin"}
+	if allowDevIdentityHeader {
+		headers = append(headers, "X-User-ID")
+	}
+	return cors.Config{
+		AllowOrigins: []string{
+			"https://cinefund.vercel.app",
+			"http://localhost:5173",
+			"http://localhost:3000",
+			"http://127.0.0.1:5173",
+		},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     headers,
+		AllowCredentials: true,
 	}
 }
 
@@ -299,7 +329,7 @@ func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.Ha
 			appRole = "BACKER"
 		}
 
-		token, err := GenerateJWT(dbID, appRole, jwtSecret, 7*24*time.Hour)
+		token, err := GenerateJWT(dbID, appRole, jwtSecret, sessionTTL)
 		if err != nil {
 			_ = c.Error(fmt.Errorf("generate jwt: %w", err))
 			return
@@ -323,3 +353,102 @@ func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.Ha
 	}
 }
 
+// demoAccount is one of the fixed, public demo identities. The IDs match
+// cmd/seed and DEMO_USERS in the web app.
+type demoAccount struct {
+	ID    uuid.UUID
+	Email string
+	Name  string
+	Role  string
+}
+
+var demoAccounts = map[string]demoAccount{
+	"creator": {
+		ID:    uuid.MustParse("00000000-0000-0000-0000-000000000001"),
+		Email: "creator@cinefund.dev",
+		Name:  "Ava Chen",
+		Role:  "CREATOR",
+	},
+	"backer": {
+		ID:    uuid.MustParse("00000000-0000-0000-0000-000000000002"),
+		Email: "backer@cinefund.dev",
+		Name:  "Ravi Patel",
+		Role:  "BACKER",
+	},
+}
+
+// demoUserStore makes sure a demo account's users row exists.
+type demoUserStore interface {
+	EnsureDemoUser(ctx context.Context, acct demoAccount) (displayName string, err error)
+}
+
+// pgDemoUsers is the Postgres demoUserStore.
+type pgDemoUsers struct{ pool *postgres.Pool }
+
+// EnsureDemoUser inserts the demo user if it is missing, so the demo works on
+// a fresh database. An existing row (for example one written by cmd/seed) is
+// left untouched.
+func (s pgDemoUsers) EnsureDemoUser(ctx context.Context, acct demoAccount) (string, error) {
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO users (id, email, password_hash, display_name)
+		VALUES ($1, $2, '', $3)
+		ON CONFLICT DO NOTHING`, acct.ID, acct.Email, acct.Name); err != nil {
+		return "", fmt.Errorf("insert demo user: %w", err)
+	}
+	var name string
+	err := s.pool.QueryRow(ctx, `SELECT display_name FROM users WHERE id = $1`, acct.ID).Scan(&name)
+	if postgres.IsNoRows(err) {
+		// The insert was skipped because another user already has this email.
+		return "", fmt.Errorf("demo user %s missing: email %s belongs to another account", acct.ID, acct.Email)
+	}
+	if err != nil {
+		return "", fmt.Errorf("load demo user: %w", err)
+	}
+	return name, nil
+}
+
+// DemoAuthRequest defines the payload expected by POST /api/v1/auth/demo.
+type DemoAuthRequest struct {
+	Account string `json:"account"` // "creator" or "backer"
+}
+
+// HandleDemoAuth issues a session token for one of the fixed demo accounts.
+//
+// Only the accounts in demoAccounts can be requested, so this cannot be used
+// to become an arbitrary user. The route is mounted only when
+// DEMO_LOGIN_ENABLED is set.
+func HandleDemoAuth(users demoUserStore, jwtSecret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var body DemoAuthRequest
+		if !httpx.BindJSON(c, &body) {
+			return
+		}
+		acct, ok := demoAccounts[body.Account]
+		if !ok {
+			httpx.Abort(c, errs.Invalid("UNKNOWN_DEMO_ACCOUNT", `account must be "creator" or "backer"`))
+			return
+		}
+
+		name, err := users.EnsureDemoUser(c.Request.Context(), acct)
+		if err != nil {
+			_ = c.Error(err)
+			return
+		}
+
+		token, err := GenerateJWT(acct.ID, acct.Role, jwtSecret, sessionTTL)
+		if err != nil {
+			_ = c.Error(fmt.Errorf("generate jwt: %w", err))
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"token": token,
+			"user": gin.H{
+				"id":    acct.ID.String(),
+				"email": acct.Email,
+				"name":  name,
+				"role":  acct.Role,
+			},
+		})
+	}
+}

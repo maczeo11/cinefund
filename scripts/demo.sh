@@ -24,11 +24,15 @@ if [ -z "$CAMPAIGN_ID" ]; then
   echo "created campaign: $CAMPAIGN_ID"
 fi
 
-# 2. create a pledge
+# 2. create a pledge as the demo backer (needs DEMO_LOGIN_ENABLED=true)
 echo "2) POST /campaigns/$CAMPAIGN_ID/pledges"
+BACKER_TOKEN=$(curl -sf -X POST "$API/auth/demo" \
+  -H "Content-Type: application/json" -d '{"account":"backer"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
 PLEDGE=$(curl -sf -X POST "$API/campaigns/$CAMPAIGN_ID/pledges" \
   -H "Content-Type: application/json" \
-  -d "{\"backer_id\":\"$(uuidgen 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())')\",\"amount\":50000}")
+  -H "Authorization: Bearer $BACKER_TOKEN" \
+  -d '{"amount":50000}')
 echo "$PLEDGE" | python3 -m json.tool 2>/dev/null || echo "$PLEDGE"
 echo ""
 

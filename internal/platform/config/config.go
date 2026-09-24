@@ -14,7 +14,12 @@ import (
 type Config struct {
 	Env  string `env:"APP_ENV" envDefault:"development"`
 	Port int    `env:"PORT"    envDefault:"8080"`
+	// Host is the interface the API listens on. Behind a TLS proxy on the same
+	// machine, set it to 127.0.0.1 so the plain-HTTP port is not reachable
+	// from outside. Empty listens on every interface.
+	Host string `env:"HTTP_HOST"`
 
+	Auth      Auth
 	Postgres  Postgres
 	Redis     Redis
 	Kafka     Kafka
@@ -22,6 +27,18 @@ type Config struct {
 	JWT       JWT
 	Razorpay  Razorpay
 	Transcode Transcode
+}
+
+type Auth struct {
+	// AllowDevIdentityHeader lets an X-User-ID header stand in for a token, so
+	// the API can be poked with curl without minting one. Anyone can set a
+	// header, so Validate refuses this outside development.
+	AllowDevIdentityHeader bool `env:"ALLOW_DEV_IDENTITY_HEADER" envDefault:"false"`
+
+	// DemoLogin exposes POST /api/v1/auth/demo, which issues real tokens for
+	// the fixed demo accounts and nothing else. Those accounts are public by
+	// design, so anything they own is editable by every visitor.
+	DemoLogin bool `env:"DEMO_LOGIN_ENABLED" envDefault:"false"`
 }
 
 type Postgres struct {
@@ -89,6 +106,9 @@ func (c Config) Validate() error {
 	}
 	if c.Transcode.Concurrency < 1 {
 		errs = append(errs, errors.New("TRANSCODE_CONCURRENCY must be >= 1"))
+	}
+	if c.Auth.AllowDevIdentityHeader && c.Env != "development" {
+		errs = append(errs, errors.New("ALLOW_DEV_IDENTITY_HEADER is only allowed when APP_ENV=development"))
 	}
 	if c.IsProduction() {
 		if c.Razorpay.WebhookSecret == "" {

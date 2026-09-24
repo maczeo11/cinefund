@@ -2,11 +2,11 @@ package pledge
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/maczeo11/cinefund/internal/platform/postgres"
 )
 
 // AccountKind matches the check constraint in migrations/0011.
@@ -46,10 +46,13 @@ type Queries interface {
 	GetCampaignForUpdate(ctx context.Context, id uuid.UUID) (*Campaign, error)
 	GetTierForUpdate(ctx context.Context, id uuid.UUID) (*Tier, error)
 	MarkPledgeCaptured(ctx context.Context, id uuid.UUID, paymentID string, at time.Time) error
+	MarkPledgeRefundPending(ctx context.Context, id uuid.UUID, paymentID string, at time.Time, reason string) error
 	SetPledgeStatus(ctx context.Context, id uuid.UUID, s Status) error
 	IncrementCampaignRaised(ctx context.Context, p *Pledge) error
 	IncrementTierClaimed(ctx context.Context, tierID uuid.UUID) error
 	InsertPaymentEvent(ctx context.Context, evt PaymentEvent) error
+	// InsertLedgerTransaction returns ErrLedgerTxnExists when the reference
+	// already has a transaction of this kind.
 	InsertLedgerTransaction(ctx context.Context, t LedgerTxn) (uuid.UUID, error)
 	InsertLedgerEntries(ctx context.Context, entries []LedgerEntry) error
 	GetOrCreateAccount(ctx context.Context, kind AccountKind, ownerID *uuid.UUID) (uuid.UUID, error)
@@ -60,18 +63,43 @@ type Ledger struct{}
 
 func NewLedger() *Ledger { return &Ledger{} }
 
-// RecordPledgeCapture writes the double-entry ledger rows for a capture.
+// ErrLedgerTxnExists means the transaction for this (kind, reference) is
+// already on the books. uq_ledger_txn_reference lets each be recorded once.
+var ErrLedgerTxnExists = errors.New("ledger transaction already recorded")
+
+// RecordPledgeCapture books a capture that counts toward the campaign: the
+// money moves into that campaign's escrow.
 func (l *Ledger) RecordPledgeCapture(ctx context.Context, q Queries, p *Pledge, gatewayFee int64) error {
+	return l.recordCapture(ctx, q, p, p.Amount, gatewayFee,
+		KindCampaignEscrow, &p.CampaignID,
+		fmt.Sprintf("capture %s", p.ProviderPaymentID))
+}
+
+// RecordRefundableCapture books a capture that is being handed back: the money
+// is held for the backer instead of the campaign. paid is what the provider
+// actually captured, which can differ from the pledged amount.
+func (l *Ledger) RecordRefundableCapture(ctx context.Context, q Queries, p *Pledge, paid, gatewayFee int64) error {
+	return l.recordCapture(ctx, q, p, paid, gatewayFee,
+		KindBackerRefundPayable, &p.BackerID,
+		fmt.Sprintf("capture %s held for refund: %s", p.ProviderPaymentID, p.FailureReason))
+}
+
+// recordCapture writes the double-entry rows for a capture of amount, credited
+// to the given account.
+func (l *Ledger) recordCapture(
+	ctx context.Context, q Queries, p *Pledge, amount, gatewayFee int64,
+	creditKind AccountKind, creditOwner *uuid.UUID, memo string,
+) error {
 	txnID, err := q.InsertLedgerTransaction(ctx, LedgerTxn{
 		Kind:          "PLEDGE_CAPTURE",
 		ReferenceType: "pledge",
 		ReferenceID:   p.ID,
-		Memo:          fmt.Sprintf("capture %s", p.ProviderPaymentID),
+		Memo:          memo,
 	})
+	if errors.Is(err, ErrLedgerTxnExists) {
+		return nil // already recorded; not an error
+	}
 	if err != nil {
-		if postgres.IsUnique(err) {
-			return nil // already recorded; not an error
-		}
 		return err
 	}
 
@@ -79,14 +107,14 @@ func (l *Ledger) RecordPledgeCapture(ctx context.Context, q Queries, p *Pledge, 
 	if err != nil {
 		return err
 	}
-	campEsc, err := q.GetOrCreateAccount(ctx, KindCampaignEscrow, &p.CampaignID)
+	credit, err := q.GetOrCreateAccount(ctx, creditKind, creditOwner)
 	if err != nil {
 		return err
 	}
 
 	entries := []LedgerEntry{
-		{TransactionID: txnID, AccountID: escrow, Direction: "DEBIT", Amount: p.Amount},
-		{TransactionID: txnID, AccountID: campEsc, Direction: "CREDIT", Amount: p.Amount},
+		{TransactionID: txnID, AccountID: escrow, Direction: "DEBIT", Amount: amount},
+		{TransactionID: txnID, AccountID: credit, Direction: "CREDIT", Amount: amount},
 	}
 	if gatewayFee > 0 {
 		feeExpense, err := q.GetOrCreateAccount(ctx, KindGatewayFeeExpense, nil)

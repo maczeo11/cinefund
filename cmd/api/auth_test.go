@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -124,7 +127,7 @@ func TestJWTAuthMiddleware_BearerHeader(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.Use(JWTAuthMiddleware(testSecret))
+	r.Use(JWTAuthMiddleware(testSecret, false))
 	r.GET("/test-auth", func(c *gin.Context) {
 		callerID, ok := httpx.CallerID(c)
 		if !ok {
@@ -155,7 +158,7 @@ func TestJWTAuthMiddleware_Cookie(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.Use(JWTAuthMiddleware(testSecret))
+	r.Use(JWTAuthMiddleware(testSecret, false))
 	r.GET("/test-cookie", func(c *gin.Context) {
 		callerID, ok := httpx.CallerID(c)
 		if !ok {
@@ -177,7 +180,7 @@ func TestJWTAuthMiddleware_Cookie(t *testing.T) {
 
 func TestRequireAuth_Unauthorized(t *testing.T) {
 	r := gin.New()
-	r.Use(JWTAuthMiddleware(testSecret))
+	r.Use(JWTAuthMiddleware(testSecret, false))
 	r.POST("/protected", RequireAuth(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -224,17 +227,7 @@ func TestSecurityHeadersMiddleware(t *testing.T) {
 
 func TestCORS_RestrictedOrigins(t *testing.T) {
 	r := gin.New()
-	r.Use(cors.New(cors.Config{
-		AllowOrigins: []string{
-			"https://cinefund.vercel.app",
-			"http://localhost:5173",
-			"http://localhost:3000",
-			"http://127.0.0.1:5173",
-		},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Content-Type", "Authorization", "X-Requested-With", "Origin", "X-User-ID"},
-		AllowCredentials: true,
-	}))
+	r.Use(cors.New(corsConfig(false)))
 	r.GET("/cors-test", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})
@@ -260,11 +253,11 @@ func TestCORS_RestrictedOrigins(t *testing.T) {
 		t.Errorf("disallowed origin got Access-Control-Allow-Origin = %q, want empty", got)
 	}
 
-	// 3. Preflight OPTIONS request with X-User-ID
+	// 3. Preflight OPTIONS request with the auth header
 	req3 := httptest.NewRequestWithContext(context.Background(), "OPTIONS", "/cors-test", nil)
 	req3.Header.Set("Origin", "http://localhost:5173")
 	req3.Header.Set("Access-Control-Request-Method", "POST")
-	req3.Header.Set("Access-Control-Request-Headers", "Content-Type, X-User-ID")
+	req3.Header.Set("Access-Control-Request-Headers", "Content-Type, Authorization")
 	w3 := httptest.NewRecorder()
 	r.ServeHTTP(w3, req3)
 	if w3.Code != http.StatusNoContent && w3.Code != http.StatusOK {
@@ -283,7 +276,7 @@ func TestPublicRoute_ExpiredTokenDoesNotBlock(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.Use(JWTAuthMiddleware(testSecret))
+	r.Use(JWTAuthMiddleware(testSecret, false))
 	r.GET("/public-endpoint", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -315,7 +308,7 @@ func TestRequireAuth_ExpiredTokenBlocks(t *testing.T) {
 	}
 
 	r := gin.New()
-	r.Use(JWTAuthMiddleware(testSecret))
+	r.Use(JWTAuthMiddleware(testSecret, false))
 	r.POST("/protected-endpoint", RequireAuth(), func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
@@ -330,5 +323,161 @@ func TestRequireAuth_ExpiredTokenBlocks(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "token expired") {
 		t.Errorf("expected response to mention token expired, got: %s", w.Body.String())
+	}
+}
+
+// identityHeaderRouter mounts a protected route behind the auth middleware.
+func identityHeaderRouter(allowDevIdentityHeader bool) *gin.Engine {
+	r := gin.New()
+	r.Use(JWTAuthMiddleware(testSecret, allowDevIdentityHeader))
+	r.POST("/protected", RequireAuth(), func(c *gin.Context) {
+		callerID, _ := httpx.CallerID(c)
+		c.JSON(http.StatusOK, gin.H{"caller_id": callerID.String()})
+	})
+	return r
+}
+
+func TestJWTAuthMiddleware_IdentityHeaderIgnoredByDefault(t *testing.T) {
+	r := identityHeaderRouter(false)
+
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected", nil)
+	req.Header.Set("X-User-ID", uuid.NewString())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("X-User-ID without a token must not authenticate, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestJWTAuthMiddleware_IdentityHeaderWhenEnabled(t *testing.T) {
+	r := identityHeaderRouter(true)
+	uid := uuid.New()
+
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected", nil)
+	req.Header.Set("X-User-ID", uid.String())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with the dev header enabled, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), uid.String()) {
+		t.Errorf("expected caller %s, got %s", uid, w.Body.String())
+	}
+}
+
+func TestJWTAuthMiddleware_TokenWinsOverIdentityHeader(t *testing.T) {
+	r := identityHeaderRouter(true)
+	uid := uuid.New()
+	token, err := GenerateJWT(uid, "BACKER", testSecret, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GenerateJWT: %v", err)
+	}
+
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-User-ID", uuid.NewString())
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if !strings.Contains(w.Body.String(), uid.String()) {
+		t.Fatalf("token identity must win over X-User-ID, got %s", w.Body.String())
+	}
+}
+
+// The preflight answers 204 either way; the browser enforces the header list
+// in Access-Control-Allow-Headers, so that is what is asserted.
+func TestCORS_IdentityHeaderOnlyWhenEnabled(t *testing.T) {
+	allowedHeaders := func(allow bool) string {
+		r := gin.New()
+		r.Use(cors.New(corsConfig(allow)))
+		r.POST("/cors-test", func(c *gin.Context) { c.Status(http.StatusOK) })
+		req := httptest.NewRequestWithContext(context.Background(), "OPTIONS", "/cors-test", nil)
+		req.Header.Set("Origin", "http://localhost:5173")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "X-User-ID")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		return strings.ToLower(w.Header().Get("Access-Control-Allow-Headers"))
+	}
+
+	if got := allowedHeaders(false); strings.Contains(got, "x-user-id") {
+		t.Errorf("X-User-ID allowed cross-origin with the dev header disabled: %q", got)
+	}
+	if got := allowedHeaders(true); !strings.Contains(got, "x-user-id") {
+		t.Errorf("X-User-ID not allowed cross-origin with the dev header enabled: %q", got)
+	}
+}
+
+type fakeDemoUsers struct{ ensured []uuid.UUID }
+
+func (f *fakeDemoUsers) EnsureDemoUser(_ context.Context, acct demoAccount) (string, error) {
+	f.ensured = append(f.ensured, acct.ID)
+	return acct.Name, nil
+}
+
+func postDemoAuth(t *testing.T, users demoUserStore, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := gin.New()
+	r.Use(httpx.Middleware(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	r.POST("/auth/demo", HandleDemoAuth(users, testSecret))
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/auth/demo", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestHandleDemoAuth_IssuesTokenForDemoAccount(t *testing.T) {
+	users := &fakeDemoUsers{}
+	w := postDemoAuth(t, users, `{"account":"creator"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Token string `json:"token"`
+		User  struct {
+			ID   string `json:"id"`
+			Role string `json:"role"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	want := demoAccounts["creator"]
+	claims, err := ParseAndValidateJWT(resp.Token, testSecret)
+	if err != nil {
+		t.Fatalf("issued token does not validate: %v", err)
+	}
+	if claims.Subject != want.ID.String() || claims.Role != "CREATOR" {
+		t.Fatalf("claims = %+v, want sub %s role CREATOR", claims, want.ID)
+	}
+	if resp.User.ID != want.ID.String() {
+		t.Fatalf("user id = %s, want %s", resp.User.ID, want.ID)
+	}
+	if len(users.ensured) != 1 || users.ensured[0] != want.ID {
+		t.Fatalf("demo user row not ensured: %v", users.ensured)
+	}
+}
+
+func TestHandleDemoAuth_RejectsOtherAccounts(t *testing.T) {
+	for _, body := range []string{
+		`{"account":"admin"}`,
+		`{"account":"` + uuid.NewString() + `"}`,
+		`{}`,
+	} {
+		users := &fakeDemoUsers{}
+		w := postDemoAuth(t, users, body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("body %s: expected 400, got %d: %s", body, w.Code, w.Body.String())
+		}
+		if strings.Contains(w.Body.String(), `"token"`) {
+			t.Errorf("body %s: a token was issued", body)
+		}
+		if len(users.ensured) != 0 {
+			t.Errorf("body %s: a user row was written", body)
+		}
 	}
 }

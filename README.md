@@ -127,7 +127,8 @@ make run-transcoder
 | GET    | /api/v1/campaigns/:id | Get campaign |
 | POST   | /api/v1/campaigns/:id/publish | Set campaign LIVE |
 | POST   | /api/v1/campaigns/:id/tiers | Add reward tier |
-| POST   | /api/v1/campaigns/:id/pledges | Create pledge + payment order |
+| POST   | /api/v1/auth/demo | Session token for a demo account (if enabled) |
+| POST   | /api/v1/campaigns/:id/pledges | Create pledge + payment order (auth) |
 | POST   | /api/v1/uploads | Get presigned upload URL |
 | POST   | /api/v1/uploads/:id/complete | Confirm upload, queue transcode |
 | POST   | /webhooks/razorpay | Payment webhooks |

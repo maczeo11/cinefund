@@ -148,6 +148,7 @@ func (s *Service) VerifySignature(raw []byte, signature string) error {
 
 type ConfirmInput struct {
 	PledgeID  uuid.UUID
+	CallerID  uuid.UUID // must be the pledge's backer
 	OrderID   string
 	PaymentID string
 	Signature string
@@ -188,18 +189,20 @@ func (s *Service) ConfirmPayment(ctx context.Context, in ConfirmInput) (Status, 
 			}
 			return err
 		}
+		if pledge.BackerID != in.CallerID {
+			return errs.Forbidden("NOT_YOUR_PLEDGE", "only the backer can confirm this pledge")
+		}
 		if pledge.ProviderOrderID != in.OrderID {
 			return errs.Invalid("ORDER_MISMATCH", "order does not belong to this pledge")
 		}
+		if captured {
+			if err := s.applyCapture(ctx, q, pledge, paid); err != nil {
+				return err
+			}
+		}
+		// Not captured yet means authorized or still pending; the webhook
+		// finishes it. A capture held for refund reports REFUND_PENDING.
 		status = pledge.Status
-		if !captured {
-			// authorized but not yet captured, or still pending; let the webhook finish it
-			return nil
-		}
-		if err := s.applyCapture(ctx, q, pledge, paid); err != nil {
-			return err
-		}
-		status = StatusCaptured
 		return nil
 	})
 	if err != nil {
@@ -325,17 +328,45 @@ func (s *Service) captureFromWebhook(ctx context.Context, q Queries, evt Razorpa
 	})
 }
 
+// Refund reasons, stored in pledges.failure_reason when a capture is held for
+// refund instead of counted toward the campaign.
+const (
+	RefundReasonTierSoldOut    = "TIER_SOLD_OUT"
+	RefundReasonAmountMismatch = "AMOUNT_MISMATCH"
+)
+
 // applyCapture moves a pledge to CAPTURED and writes everything that hangs off
 // that: the campaign total, the tier count, the ledger and the outbox row.
+//
+// By the time a capture arrives the backer's money has already moved, so a
+// capture is never refused for a business reason. One that cannot count
+// toward the campaign is held for refund instead (see holdForRefund).
+// Returning an error would roll everything back, fail the webhook, and have
+// the provider retry a capture that can never apply, with the payment left
+// unrecorded.
 func (s *Service) applyCapture(ctx context.Context, q Queries, pledge *Pledge, c capture) error {
-	if pledge.Status == StatusCaptured || pledge.Status == StatusSettled {
-		return nil // already applied by a prior delivery; not an error
+	switch pledge.Status {
+	case StatusCaptured, StatusSettled, StatusRefundPending, StatusRefunded, StatusRefundFailed:
+		return nil // already applied (or held for refund) by a prior delivery; not an error
 	}
 	if !pledge.Status.CanTransitionTo(StatusCaptured) {
 		return fmt.Errorf("illegal transition %s -> CAPTURED for pledge %s", pledge.Status, pledge.ID)
 	}
 	if c.Amount != pledge.Amount {
-		return fmt.Errorf("amount mismatch: paid %d, pledged %d", c.Amount, pledge.Amount)
+		return s.holdForRefund(ctx, q, pledge, c, RefundReasonAmountMismatch)
+	}
+	if pledge.TierID != nil {
+		// CreatePledge checks the limit too, but claimed_count only moves on
+		// capture, so several open checkouts can race for the last slot.
+		// Checking under the row lock here keeps chk_tier_not_oversold from
+		// ever firing on money that has already been taken.
+		tier, err := q.GetTierForUpdate(ctx, *pledge.TierID)
+		if err != nil {
+			return err
+		}
+		if tier.SoldOut() {
+			return s.holdForRefund(ctx, q, pledge, c, RefundReasonTierSoldOut)
+		}
 	}
 
 	if err := q.MarkPledgeCaptured(ctx, pledge.ID, c.PaymentID, time.Now()); err != nil {
@@ -349,6 +380,7 @@ func (s *Service) applyCapture(ctx context.Context, q Queries, pledge *Pledge, c
 			return err
 		}
 	}
+	pledge.Status = StatusCaptured
 	pledge.ProviderPaymentID = c.PaymentID
 	if err := s.ledger.RecordPledgeCapture(ctx, q, pledge, c.Fee+c.Tax); err != nil {
 		return err
@@ -370,6 +402,48 @@ func (s *Service) applyCapture(ctx context.Context, q Queries, pledge *Pledge, c
 	})
 }
 
+// holdForRefund records a capture that cannot count toward the campaign. The
+// payment stays on the pledge and the money is booked as owed to the backer,
+// while the campaign total and the tier count are left alone. The
+// pledge.refund_required outbox event is what issues the refund.
+//
+// The pledge goes straight to REFUND_PENDING: logically CAPTURED then
+// REFUND_PENDING, both legal, written as one update.
+func (s *Service) holdForRefund(ctx context.Context, q Queries, pledge *Pledge, c capture, reason string) error {
+	s.log.Warn("capture held for refund",
+		"pledge_id", pledge.ID, "payment_id", c.PaymentID, "reason", reason,
+		"paid", c.Amount, "pledged", pledge.Amount)
+
+	now := time.Now()
+	if err := q.MarkPledgeRefundPending(ctx, pledge.ID, c.PaymentID, now, reason); err != nil {
+		return err
+	}
+	pledge.Status = StatusRefundPending
+	pledge.ProviderPaymentID = c.PaymentID
+	pledge.CapturedAt = &now
+	pledge.FailureReason = reason
+	if err := s.ledger.RecordRefundableCapture(ctx, q, pledge, c.Amount, c.Fee+c.Tax); err != nil {
+		return err
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"pledge_id":   pledge.ID,
+		"campaign_id": pledge.CampaignID,
+		"backer_id":   pledge.BackerID,
+		"payment_id":  c.PaymentID,
+		"amount":      c.Amount, // what was paid, which is what goes back
+		"currency":    pledge.Currency,
+		"reason":      reason,
+	})
+	return q.InsertOutbox(ctx, OutboxEvent{
+		ID:            uuid.New(),
+		Type:          "pledge.refund_required",
+		Version:       1,
+		AggregateType: "pledge",
+		AggregateID:   pledge.ID,
+		Payload:       payload,
+	})
+}
+
 func (s *Service) applyFailure(ctx context.Context, q Queries, evt RazorpayWebhookEvent) error {
 	p := evt.Payload.Payment.Entity
 	pledge, err := s.resolvePledge(ctx, q, evt.ID, p.OrderID, p.Notes.PledgeID)
@@ -380,7 +454,12 @@ func (s *Service) applyFailure(ctx context.Context, q Queries, evt RazorpayWebho
 		return nil
 	}
 	if !pledge.Status.CanTransitionTo(StatusFailed) {
-		return fmt.Errorf("illegal transition %s -> FAILED for pledge %s", pledge.Status, pledge.ID)
+		// A failed attempt reported after the order was already paid: webhooks
+		// arrive out of order, and Checkout lets the backer retry on the same
+		// order. The capture stands, so there is nothing to undo, and an error
+		// would only make the provider retry this event forever.
+		s.log.Info("ignoring stale payment failure", "pledge_id", pledge.ID, "status", pledge.Status)
+		return nil
 	}
 	return q.SetPledgeStatus(ctx, pledge.ID, StatusFailed)
 }

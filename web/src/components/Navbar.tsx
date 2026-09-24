@@ -12,7 +12,6 @@ export default function Navbar({ onHome, onCreate }: Props) {
   const navigate = useNavigate()
   const location = useLocation()
   const [authOpen, setAuthOpen] = useState(false)
-  const [authTab, setAuthTab] = useState<'signin' | 'signup'>('signin')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [user, setUser] = useState<UserProfile | null>(getActiveUser())
@@ -63,8 +62,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
     setMobileMenuOpen(false)
   }
 
-  function openAuth(tab: 'signin' | 'signup' = 'signin') {
-    setAuthTab(tab)
+  function openAuth() {
     setAuthOpen(true)
     setDropdownOpen(false)
     setMobileMenuOpen(false)
@@ -72,7 +70,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
 
   function handleCreateClick() {
     if (!user) {
-      openAuth('signin')
+      openAuth()
       return
     }
     onCreate()
@@ -261,7 +259,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                     </button>
 
                     <button
-                      onClick={() => openAuth('signin')}
+                      onClick={openAuth}
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-silver-dim hover:text-amber hover:bg-white/[0.06] transition-colors cursor-pointer"
                     >
                       <span>⚡</span>
@@ -284,13 +282,13 @@ export default function Navbar({ onHome, onCreate }: Props) {
           ) : (
             <div className="flex items-center gap-2">
               <button
-                onClick={() => openAuth('signin')}
+                onClick={openAuth}
                 className="px-3.5 py-1.5 rounded-lg border border-white/15 hover:border-amber/40 bg-white/[0.04] hover:bg-white/[0.08] text-silver hover:text-white text-xs font-medium transition-all cursor-pointer"
               >
                 Sign In
               </button>
               <button
-                onClick={() => openAuth('signup')}
+                onClick={openAuth}
                 className="hidden sm:inline-flex px-3.5 py-1.5 rounded-lg bg-amber hover:bg-amber-bright text-ink text-xs font-semibold transition-all shadow-sm cursor-pointer"
               >
                 Get Started
@@ -340,7 +338,6 @@ export default function Navbar({ onHome, onCreate }: Props) {
       <AuthModal
         isOpen={authOpen}
         onClose={() => setAuthOpen(false)}
-        initialTab={authTab}
       />
     </>
   )
