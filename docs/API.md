@@ -104,11 +104,32 @@ Returns 201 with the tier.
 
 ---
 
+## Auth
+
+### POST /api/v1/auth/demo
+
+Issues a session token for one of the two public demo accounts. Mounted only
+when `DEMO_LOGIN_ENABLED=true`; it cannot mint a token for any other user.
+
+```json
+{ "account": "creator" }
+```
+
+`account` is `creator` (Ava) or `backer` (Ravi). Response (200) has the same
+shape as `/auth/firebase`: `{ "token": "...", "user": { "id", "email", "name", "role" } }`.
+
+Other endpoints authenticate with `Authorization: Bearer <token>`. A bare
+`X-User-ID` header is accepted only when `ALLOW_DEV_IDENTITY_HEADER=true`,
+which config validation refuses outside `APP_ENV=development`.
+
+---
+
 ## Pledges
 
-### POST /api/v1/campaigns/:id/pledges
+### POST /api/v1/campaigns/:id/pledges (auth)
 
-Creates a pledge and initiates a Razorpay payment order.
+Creates a pledge and initiates a Razorpay payment order. The backer is the
+authenticated caller; any `backer_id` in the body is ignored.
 
 **Validations:**
 - Campaign must be LIVE with >60 seconds until deadline
@@ -118,7 +139,6 @@ Creates a pledge and initiates a Razorpay payment order.
 
 ```json
 {
-  "backer_id": "uuid",
   "tier_id": "uuid or null",
   "amount": 100000,
   "anonymous": false,
@@ -140,6 +160,18 @@ Response (201):
 
 The client takes the `order_id` and completes payment through the Razorpay
 frontend SDK. Razorpay then sends a webhook to confirm.
+
+### POST /api/v1/pledges/:id/confirm (auth)
+
+Settles a pledge from Checkout's browser callback. Only the pledge's backer
+can call it. Body: `razorpay_order_id`, `razorpay_payment_id`,
+`razorpay_signature`. Response: `{ "id": "uuid", "status": "CAPTURED" }`.
+
+A capture that cannot count toward the campaign (the tier sold out while the
+backer was paying, or the paid amount differs from the pledge) is still
+recorded: the pledge becomes `REFUND_PENDING` with a `failure_reason`, the
+money is booked to `BACKER_REFUND_PAYABLE`, and a `pledge.refund_required`
+event is emitted. Webhooks for such captures return 200, not a retryable error.
 
 ---
 

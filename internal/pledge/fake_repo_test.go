@@ -11,7 +11,8 @@ import (
 )
 
 // in-memory version of Queries for unit tests.
-// mirrors the uq_provider_event constraint so idempotency logic is testable.
+// mirrors the uq_provider_event, uq_ledger_txn_reference and
+// chk_tier_not_oversold constraints so the logic around them is testable.
 type fakeQueries struct {
 	mu sync.Mutex
 
@@ -25,9 +26,11 @@ type fakeQueries struct {
 	backerCount map[uuid.UUID]int
 
 	// processed provider_event_ids - emulates uq_provider_event.
-	events   map[string]bool
-	balances map[string]int64 // ledger account kind -> balance
-	outbox   []OutboxEvent
+	events map[string]bool
+	// recorded ledger references - emulates uq_ledger_txn_reference.
+	ledgerRefs map[string]bool
+	balances   map[string]int64 // ledger account kind -> balance
+	outbox     []OutboxEvent
 }
 
 func newFakeQueries() *fakeQueries {
@@ -39,6 +42,8 @@ func newFakeQueries() *fakeQueries {
 		raised:   make(map[uuid.UUID]int64),
 		events:   make(map[string]bool),
 		balances: make(map[string]int64),
+
+		ledgerRefs: make(map[string]bool),
 
 		backers:     make(map[string]bool),
 		backerCount: make(map[uuid.UUID]int),
@@ -63,6 +68,15 @@ func (f *fakeQueries) seedPledge(p *Pledge) {
 }
 
 func (f *fakeQueries) OutboxLen() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.outbox) }
+func (f *fakeQueries) OutboxTypes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	types := make([]string, len(f.outbox))
+	for i, e := range f.outbox {
+		types[i] = e.Type
+	}
+	return types
+}
 func (f *fakeQueries) Raised(id uuid.UUID) int64 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -153,6 +167,20 @@ func (f *fakeQueries) MarkPledgeCaptured(_ context.Context, id uuid.UUID, paymen
 	return nil
 }
 
+func (f *fakeQueries) MarkPledgeRefundPending(_ context.Context, id uuid.UUID, paymentID string, at time.Time, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.pledges[id]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	p.Status = StatusRefundPending
+	p.ProviderPaymentID = paymentID
+	p.CapturedAt = &at
+	p.FailureReason = reason
+	return nil
+}
+
 func (f *fakeQueries) SetPledgeStatus(_ context.Context, id uuid.UUID, s Status) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -183,6 +211,9 @@ func (f *fakeQueries) IncrementTierClaimed(_ context.Context, tierID uuid.UUID) 
 	if !ok {
 		return pgx.ErrNoRows
 	}
+	if t.QuantityLimit != nil && t.ClaimedCount >= *t.QuantityLimit {
+		return &pgconn.PgError{Code: "23514", ConstraintName: "chk_tier_not_oversold"}
+	}
 	t.ClaimedCount++
 	return nil
 }
@@ -199,6 +230,13 @@ func (f *fakeQueries) InsertPaymentEvent(_ context.Context, evt PaymentEvent) er
 }
 
 func (f *fakeQueries) InsertLedgerTransaction(_ context.Context, t LedgerTxn) (uuid.UUID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := t.Kind + ":" + t.ReferenceType + ":" + t.ReferenceID.String()
+	if f.ledgerRefs[key] {
+		return uuid.Nil, ErrLedgerTxnExists
+	}
+	f.ledgerRefs[key] = true
 	return uuid.New(), nil
 }
 

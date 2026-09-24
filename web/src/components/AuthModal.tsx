@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { signInWithGoogle, signOutFirebase } from '../firebase'
+import { ApiError, exchangeFirebaseToken, isBackendUnavailable, loginDemo } from '../api'
 
 export type UserRole = 'CREATOR' | 'BACKER' | 'ADMIN'
 
@@ -12,6 +13,9 @@ export type UserProfile = {
   tag: string
   photoURL?: string
   token?: string
+  // offline marks a sign-in made while the API was unreachable: the user
+  // browses the offline demo vault with no session token.
+  offline?: boolean
 }
 
 export const DEMO_USERS: UserProfile[] = [
@@ -34,40 +38,6 @@ export const DEMO_USERS: UserProfile[] = [
 ]
 
 const STORAGE_KEY = 'cinefund_current_user'
-const USERS_KEY = 'cinefund_registered_users'
-
-export function getRegisteredUsers(): UserProfile[] {
-  try {
-    const saved = localStorage.getItem(USERS_KEY)
-    if (saved) {
-      const parsed: UserProfile[] = JSON.parse(saved)
-      const ids = new Set(DEMO_USERS.map(u => u.id))
-      const additional = parsed.filter(u => !ids.has(u.id))
-      return [...DEMO_USERS, ...additional]
-    }
-  } catch {
-    // fallback
-  }
-  return DEMO_USERS
-}
-
-export function saveRegisteredUser(user: UserProfile) {
-  try {
-    const list = getRegisteredUsers()
-    const idx = list.findIndex(
-      u => u.id === user.id || (u.email && user.email && u.email.toLowerCase() === user.email.toLowerCase())
-    )
-    if (idx >= 0) {
-      list[idx] = user
-    } else {
-      list.push(user)
-    }
-    localStorage.setItem(USERS_KEY, JSON.stringify(list))
-  } catch {
-    // ignore
-  }
-}
-
 /**
  * Returns the currently signed-in user, or null if the visitor is a guest.
  * New visitors start unauthenticated for an intuitive, predictable experience.
@@ -76,7 +46,11 @@ export function getActiveUser(): UserProfile | null {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (!saved || saved === 'null') return null
-    return JSON.parse(saved)
+    const user = JSON.parse(saved) as UserProfile
+    // Sessions with no token predate real sign-in (or came from the removed
+    // email form, whose accounts the API never knew): treat them as signed out.
+    if (!user.token && !user.offline) return null
+    return user
   } catch {
     return null
   }
@@ -105,6 +79,26 @@ function syncAccessTokenCookie(user: UserProfile | null) {
   }
 }
 
+// signInAsDemo signs in as one of the shared demo accounts with a real session
+// token from the API. If the API is unreachable it signs in offline so the demo
+// vault stays explorable.
+export async function signInAsDemo(profile: UserProfile): Promise<UserProfile> {
+  try {
+    const session = await loginDemo(profile.role === 'CREATOR' ? 'creator' : 'backer')
+    const user: UserProfile = { ...profile, id: session.user.id, token: session.token, offline: false }
+    setActiveUser(user)
+    return user
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      throw new Error('Demo accounts are turned off on this server.')
+    }
+    if (!isBackendUnavailable(err)) throw err
+    const user: UserProfile = { ...profile, token: undefined, offline: true }
+    setActiveUser(user)
+    return user
+  }
+}
+
 export function logout() {
   signOutFirebase()
   setActiveUser(null)
@@ -113,28 +107,15 @@ export function logout() {
 type Props = {
   isOpen: boolean
   onClose: () => void
-  initialTab?: 'signin' | 'signup'
 }
 
-export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Props) {
-  const [tab, setTab] = useState<'signin' | 'signup'>(initialTab)
+export default function AuthModal({ isOpen, onClose }: Props) {
   const [current, setCurrent] = useState<UserProfile | null>(getActiveUser())
-
-  // Sign In fields
-  const [signInEmail, setSignInEmail] = useState('')
-  const [signInPassword, setSignInPassword] = useState('')
+  const [role, setRole] = useState<UserRole>('CREATOR')
   const [signInError, setSignInError] = useState<string | null>(null)
-
-  // Sign Up fields
-  const [signUpName, setSignUpName] = useState('')
-  const [signUpEmail, setSignUpEmail] = useState('')
-  const [signUpPassword, setSignUpPassword] = useState('')
-  const [signUpRole, setSignUpRole] = useState<UserRole>('CREATOR')
-  const [signUpError, setSignUpError] = useState<string | null>(null)
-
-  const [showPassword, setShowPassword] = useState(false)
   const [authSuccess, setAuthSuccess] = useState<string | null>(null)
   const [isGoogleLoading, setIsGoogleLoading] = useState(false)
+  const [demoLoading, setDemoLoading] = useState<string | null>(null)
 
   const closeTimer = useRef<number | null>(null)
 
@@ -151,12 +132,10 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
   useEffect(() => {
     if (isOpen) {
       setCurrent(getActiveUser())
-      setTab(initialTab)
       setSignInError(null)
-      setSignUpError(null)
       setAuthSuccess(null)
     }
-  }, [isOpen, initialTab])
+  }, [isOpen])
 
   // Close on Escape key
   useEffect(() => {
@@ -178,53 +157,38 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
     }
   }, [])
 
-  async function handleGoogleSignIn(selectedRole?: UserRole) {
+  async function handleGoogleSignIn() {
+    setIsGoogleLoading(true)
+    setSignInError(null)
     try {
-      setIsGoogleLoading(true)
-      setSignInError(null)
-      setSignUpError(null)
-
       const { user, idToken } = await signInWithGoogle()
-      const assignedRole: UserRole = selectedRole || (tab === 'signup' ? signUpRole : 'CREATOR')
-
-      const googleProfile: UserProfile = {
+      const base: UserProfile = {
         id: user.uid,
         name: user.displayName || user.email?.split('@')[0] || 'Cinema Patron',
         email: user.email || '',
-        role: assignedRole,
+        role,
         avatar: user.photoURL || (user.displayName?.[0] || 'G').toUpperCase(),
         photoURL: user.photoURL || undefined,
-        tag: assignedRole === 'CREATOR' ? 'Independent 35mm Director' : 'Film Patron & Backer',
-        token: idToken,
+        tag: role === 'CREATOR' ? 'Independent 35mm Director' : 'Film Patron & Backer',
       }
 
-      saveRegisteredUser(googleProfile)
-      setCurrent(googleProfile)
-      setActiveUser(googleProfile)
-      setAuthSuccess(`Welcome, ${googleProfile.name}! Signed in successfully.`)
+      // Wait for the CineFund session: until then there is no token the API
+      // accepts, so the user is not signed in yet.
+      let profile: UserProfile
+      try {
+        const session = await exchangeFirebaseToken(idToken, role)
+        profile = { ...base, id: session.user.id, name: session.user.name || base.name, token: session.token }
+      } catch (err) {
+        if (!isBackendUnavailable(err)) {
+          await signOutFirebase()
+          throw err
+        }
+        profile = { ...base, offline: true }
+      }
 
-      // Background sync to backend
-      fetch('/api/v1/auth/firebase', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id_token: idToken,
-          role: assignedRole,
-        }),
-      })
-        .then(async resp => {
-          if (resp.ok) {
-            const data = await resp.json()
-            if (data.token) {
-              googleProfile.token = data.token
-              if (data.user?.id) googleProfile.id = data.user.id
-              saveRegisteredUser(googleProfile)
-              setActiveUser(googleProfile)
-            }
-          }
-        })
-        .catch(() => {})
-
+      setCurrent(profile)
+      setActiveUser(profile)
+      setAuthSuccess(`Welcome, ${profile.name}! Signed in successfully.`)
       scheduleClose(350)
     } catch (err: any) {
       if (err?.code === 'auth/popup-closed-by-user') {
@@ -237,90 +201,19 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
     }
   }
 
-  function handleQuickDemoSelect(user: UserProfile) {
-    setCurrent(user)
-    setActiveUser(user)
-    setAuthSuccess(`Signed in as ${user.name} (${user.role === 'CREATOR' ? 'Director' : 'Backer'})`)
-    scheduleClose(350)
-  }
-
-  function handleSignInSubmit(e: React.FormEvent) {
-    e.preventDefault()
+  async function handleQuickDemoSelect(demo: UserProfile) {
     setSignInError(null)
-
-    const emailTrim = signInEmail.trim().toLowerCase()
-    if (!emailTrim) {
-      setSignInError('Please enter your email address.')
-      return
+    setDemoLoading(demo.id)
+    try {
+      const user = await signInAsDemo(demo)
+      setCurrent(user)
+      setAuthSuccess(`Signed in as ${user.name} (${user.role === 'CREATOR' ? 'Director' : 'Backer'})`)
+      scheduleClose(350)
+    } catch (err) {
+      setSignInError((err as Error).message)
+    } finally {
+      setDemoLoading(null)
     }
-    if (!signInPassword) {
-      setSignInError('Please enter your password.')
-      return
-    }
-
-    const allUsers = getRegisteredUsers()
-    const matched = allUsers.find(u => u.email.toLowerCase() === emailTrim)
-
-    if (matched) {
-      setCurrent(matched)
-      setActiveUser(matched)
-      setAuthSuccess(`Welcome back, ${matched.name}!`)
-      scheduleClose(400)
-    } else {
-      // Auto-provision demo account for testing with entered email
-      const namePart = emailTrim.split('@')[0]
-      const formattedName = namePart.charAt(0).toUpperCase() + namePart.slice(1)
-      const role: UserRole = emailTrim.includes('director') || emailTrim.includes('film') ? 'CREATOR' : 'BACKER'
-      const newUser: UserProfile = {
-        id: `user-${Date.now()}`,
-        name: formattedName || 'Cinema Member',
-        email: emailTrim,
-        role,
-        avatar: (formattedName[0] || 'C').toUpperCase(),
-        tag: role === 'CREATOR' ? 'Independent 35mm Director' : 'Film Patron & Backer',
-      }
-      saveRegisteredUser(newUser)
-      setCurrent(newUser)
-      setActiveUser(newUser)
-      setAuthSuccess(`Welcome to CineFund, ${newUser.name}!`)
-      scheduleClose(400)
-    }
-  }
-
-  function handleSignUpSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setSignUpError(null)
-
-    const nameTrim = signUpName.trim()
-    const emailTrim = signUpEmail.trim().toLowerCase()
-
-    if (!nameTrim) {
-      setSignUpError('Please enter your full name.')
-      return
-    }
-    if (!emailTrim || !emailTrim.includes('@')) {
-      setSignUpError('Please enter a valid email address.')
-      return
-    }
-    if (!signUpPassword || signUpPassword.length < 4) {
-      setSignUpError('Password must be at least 4 characters.')
-      return
-    }
-
-    const newUser: UserProfile = {
-      id: `user-${Date.now()}`,
-      name: nameTrim,
-      email: emailTrim,
-      role: signUpRole,
-      avatar: nameTrim.charAt(0).toUpperCase(),
-      tag: signUpRole === 'CREATOR' ? 'Independent 35mm Director' : 'Film Patron & Backer',
-    }
-
-    saveRegisteredUser(newUser)
-    setCurrent(newUser)
-    setActiveUser(newUser)
-    setAuthSuccess(`Account created! Welcome, ${newUser.name}.`)
-    scheduleClose(450)
   }
 
   if (!isOpen) return null
@@ -342,7 +235,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
             </div>
             <div>
               <h2 className="font-cinema font-bold text-lg text-silver tracking-wide">
-                {current ? 'Account Profile' : tab === 'signin' ? 'Welcome Back' : 'Create an Account'}
+                {current ? 'Account Profile' : 'Sign in to CineFund'}
               </h2>
               <p className="text-xs text-silver-dim">
                 {current
@@ -405,10 +298,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
 
               <button
                 type="button"
-                onClick={() => {
-                  setCurrent(null)
-                  setTab('signin')
-                }}
+                onClick={() => setCurrent(null)}
                 className="w-full py-2.5 px-4 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] text-silver hover:text-white text-xs font-mono transition-all"
               >
                 Switch to Another Account
@@ -429,42 +319,54 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
           </div>
         ) : (
           <div className="p-6 overflow-y-auto space-y-5">
-            {/* Tab Selector */}
-            <div className="flex p-1 rounded-xl bg-black/40 border border-white/[0.08]">
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('signin')
-                  setSignInError(null)
-                }}
-                className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
-                  tab === 'signin'
-                    ? 'bg-amber text-ink font-bold shadow-sm'
-                    : 'text-silver-dim hover:text-silver'
-                }`}
-              >
-                Sign In
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setTab('signup')
-                  setSignUpError(null)
-                }}
-                className={`flex-1 py-2 rounded-lg text-xs font-medium transition-all ${
-                  tab === 'signup'
-                    ? 'bg-amber text-ink font-bold shadow-sm'
-                    : 'text-silver-dim hover:text-silver'
-                }`}
-              >
-                Create Account
-              </button>
+            {/* Role for a new Google account */}
+            <div>
+              <label className="block text-xs text-silver-dim mb-2 font-medium">
+                I'm joining as:
+              </label>
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setRole('CREATOR')}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    role === 'CREATOR'
+                      ? 'border-amber bg-amber/15 text-amber'
+                      : 'border-white/10 bg-black/30 text-silver-dim hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
+                    <span>🎬</span>
+                    <span>Filmmaker</span>
+                  </div>
+                  <p className="text-[11px] leading-snug opacity-80">
+                    Launch campaigns & stream film reels
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setRole('BACKER')}
+                  className={`p-3 rounded-xl border text-left transition-all ${
+                    role === 'BACKER'
+                      ? 'border-emerald-500 bg-emerald-950/30 text-emerald-400'
+                      : 'border-white/10 bg-black/30 text-silver-dim hover:border-white/20'
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
+                    <span>🎟️</span>
+                    <span>Film Patron</span>
+                  </div>
+                  <p className="text-[11px] leading-snug opacity-80">
+                    Back indie projects & stream workprints
+                  </p>
+                </button>
+              </div>
             </div>
 
             {/* 1-Click Google Sign In */}
             <button
               type="button"
-              onClick={() => handleGoogleSignIn()}
+              onClick={handleGoogleSignIn}
               disabled={isGoogleLoading}
               className="w-full py-3 px-4 rounded-xl bg-white text-gray-900 hover:bg-gray-100 font-medium text-sm transition-all flex items-center justify-center gap-3 shadow-md active:scale-[0.99] disabled:opacity-50"
             >
@@ -477,207 +379,25 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
               <span>{isGoogleLoading ? 'Signing in with Google...' : 'Continue with Google'}</span>
             </button>
 
-            {/* Divider */}
-            <div className="flex items-center gap-3 text-xs text-silver-faint font-mono">
-              <div className="flex-1 h-[1px] bg-white/[0.08]" />
-              <span>or with email</span>
-              <div className="flex-1 h-[1px] bg-white/[0.08]" />
-            </div>
-
-            {/* TAB 1: SIGN IN FORM */}
-            {tab === 'signin' ? (
-              <form onSubmit={handleSignInSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs text-silver-dim mb-1 font-medium" htmlFor="signin-email">
-                    Email Address
-                  </label>
-                  <input
-                    id="signin-email"
-                    type="email"
-                    value={signInEmail}
-                    onChange={e => setSignInEmail(e.target.value)}
-                    placeholder="you@example.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-silver-dim font-medium" htmlFor="signin-password">
-                      Password
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(p => !p)}
-                      className="text-[11px] text-silver-faint hover:text-silver"
-                    >
-                      {showPassword ? 'Hide' : 'Show'}
-                    </button>
-                  </div>
-                  <input
-                    id="signin-password"
-                    type={showPassword ? 'text' : 'password'}
-                    value={signInPassword}
-                    onChange={e => setSignInPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
-                  />
-                </div>
-
-                {signInError && (
-                  <p className="text-xs text-crimson bg-crimson/10 p-2.5 rounded-lg border border-crimson/30">
-                    {signInError}
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full py-3 rounded-xl bg-amber hover:bg-amber-bright text-ink font-semibold text-sm transition-all shadow-md active:scale-[0.99]"
-                >
-                  Sign In
-                </button>
-
-                <p className="text-xs text-silver-dim text-center pt-1">
-                  Don't have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('signup')
-                      setSignInError(null)
-                    }}
-                    className="text-amber hover:underline font-medium ml-1"
-                  >
-                    Create an account
-                  </button>
-                </p>
-              </form>
-            ) : (
-              /* TAB 2: SIGN UP FORM */
-              <form onSubmit={handleSignUpSubmit} className="space-y-4">
-                <div>
-                  <label className="block text-xs text-silver-dim mb-1 font-medium" htmlFor="signup-name">
-                    Full Name
-                  </label>
-                  <input
-                    id="signup-name"
-                    type="text"
-                    value={signUpName}
-                    onChange={e => setSignUpName(e.target.value)}
-                    placeholder="Maya Lin"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-silver-dim mb-1 font-medium" htmlFor="signup-email">
-                    Email Address
-                  </label>
-                  <input
-                    id="signup-email"
-                    type="email"
-                    value={signUpEmail}
-                    onChange={e => setSignUpEmail(e.target.value)}
-                    placeholder="maya@example.com"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-silver-dim mb-1 font-medium" htmlFor="signup-password">
-                    Password
-                  </label>
-                  <input
-                    id="signup-password"
-                    type="password"
-                    value={signUpPassword}
-                    onChange={e => setSignUpPassword(e.target.value)}
-                    placeholder="At least 4 characters"
-                    className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
-                  />
-                </div>
-
-                {/* Role Selector */}
-                <div>
-                  <label className="block text-xs text-silver-dim mb-2 font-medium">
-                    I want to:
-                  </label>
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <button
-                      type="button"
-                      onClick={() => setSignUpRole('CREATOR')}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        signUpRole === 'CREATOR'
-                          ? 'border-amber bg-amber/15 text-amber'
-                          : 'border-white/10 bg-black/30 text-silver-dim hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
-                        <span>🎬</span>
-                        <span>Filmmaker</span>
-                      </div>
-                      <p className="text-[11px] leading-snug opacity-80">
-                        Launch campaigns & stream film reels
-                      </p>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setSignUpRole('BACKER')}
-                      className={`p-3 rounded-xl border text-left transition-all ${
-                        signUpRole === 'BACKER'
-                          ? 'border-emerald-500 bg-emerald-950/30 text-emerald-400'
-                          : 'border-white/10 bg-black/30 text-silver-dim hover:border-white/20'
-                      }`}
-                    >
-                      <div className="flex items-center gap-1.5 font-bold text-xs mb-1">
-                        <span>🎟️</span>
-                        <span>Film Patron</span>
-                      </div>
-                      <p className="text-[11px] leading-snug opacity-80">
-                        Back indie projects & stream workprints
-                      </p>
-                    </button>
-                  </div>
-                </div>
-
-                {signUpError && (
-                  <p className="text-xs text-crimson bg-crimson/10 p-2.5 rounded-lg border border-crimson/30">
-                    {signUpError}
-                  </p>
-                )}
-
-                <button
-                  type="submit"
-                  className="w-full py-3 rounded-xl bg-amber hover:bg-amber-bright text-ink font-semibold text-sm transition-all shadow-md active:scale-[0.99]"
-                >
-                  Create Account
-                </button>
-
-                <p className="text-xs text-silver-dim text-center pt-1">
-                  Already have an account?{' '}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setTab('signin')
-                      setSignUpError(null)
-                    }}
-                    className="text-amber hover:underline font-medium ml-1"
-                  >
-                    Sign in here
-                  </button>
-                </p>
-              </form>
+            {signInError && (
+              <p className="text-xs text-crimson bg-crimson/10 p-2.5 rounded-lg border border-crimson/30">
+                {signInError}
+              </p>
             )}
 
             {/* Quick Demo Access Footer for Evaluators */}
             <div className="pt-4 border-t border-white/[0.08] text-center">
               <p className="text-[11px] text-silver-faint mb-2 font-mono">
-                Evaluating CineFund? 1-Click Demo Profiles:
+                Evaluating CineFund? Shared demo accounts:
+              </p>
+              <p className="text-[10px] text-silver-faint mb-2">
+                Public logins anyone can use, not private accounts.
               </p>
               <div className="flex justify-center gap-2">
                 <button
                   type="button"
                   onClick={() => handleQuickDemoSelect(DEMO_USERS[0])}
+                  disabled={demoLoading !== null}
                   className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-amber/15 border border-white/10 hover:border-amber/40 text-xs text-silver hover:text-amber font-mono transition-all flex items-center gap-1.5"
                 >
                   <span>🎬</span>
@@ -686,6 +406,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = 'signin' }: Pr
                 <button
                   type="button"
                   onClick={() => handleQuickDemoSelect(DEMO_USERS[1])}
+                  disabled={demoLoading !== null}
                   className="px-2.5 py-1.5 rounded-lg bg-white/[0.04] hover:bg-emerald-500/15 border border-white/10 hover:border-emerald-500/40 text-xs text-silver hover:text-emerald-400 font-mono transition-all flex items-center gap-1.5"
                 >
                   <span>🎟️</span>

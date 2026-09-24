@@ -27,6 +27,27 @@ export function getAuthToken(): string | null {
   return readStoredUser()?.token || null
 }
 
+// ApiError is an answer from the API itself: the request reached the server,
+// which rejected it.
+export class ApiError extends Error {
+  readonly status: number
+  readonly code?: string
+  constructor(message: string, status: number, code?: string) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.code = code
+  }
+}
+
+// isBackendUnavailable is true when the API could not be reached at all (a
+// network failure, or the server/proxy answering 5xx). Only then does the app
+// fall back to the offline demo vault; a 4xx (sold out, not signed in, invalid
+// input) is a real answer and must reach the user.
+export function isBackendUnavailable(err: unknown): boolean {
+  return !(err instanceof ApiError) || err.status >= 500
+}
+
 export type CampaignVideo = {
   asset_id: string | null
   status: string
@@ -258,36 +279,52 @@ async function request<T>(path: string, opts: { method?: string; body?: unknown 
   if (body) {
     headers['Content-Type'] = 'application/json'
   }
-  try {
-    const u = readStoredUser()
-    if (u?.token) {
-      headers['Authorization'] = `Bearer ${u.token}`
-    }
-    if (u?.id) {
-      headers['X-User-ID'] = u.id
-    }
-  } catch {
-    // ignore
+  const token = getAuthToken()
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
   }
+  let res: Response
   try {
-    const res = await fetch(BASE + path, {
+    res = await fetch(BASE + path, {
       method,
       headers: Object.keys(headers).length > 0 ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     })
-    if (!res.ok) {
-      const detail = await res.json().catch(() => null as unknown)
-      const msg = (detail as { error?: { message?: string } } | null)?.error?.message
-      throw new Error(msg || `${method} ${path} failed (${res.status})`)
-    }
-    demoModeActive = false
-    return (await res.json()) as T
   } catch (err) {
-    // Graceful demo fallback when live backend cluster is cold or initializing
+    // Backend cold or unreachable: callers may fall back to the demo vault.
+    demoModeActive = true
+    throw err
+  }
+  if (!res.ok) {
+    const detail = await res.json().catch(() => null as unknown)
+    const e = (detail as { error?: { message?: string; code?: string } } | null)?.error
+    if (res.status >= 500) demoModeActive = true
+    throw new ApiError(e?.message || `${method} ${path} failed (${res.status})`, res.status, e?.code)
+  }
+  try {
+    const data = (await res.json()) as T
+    demoModeActive = false
+    return data
+  } catch (err) {
+    // A 2xx that is not JSON is the SPA fallback page, not the API.
     demoModeActive = true
     throw err
   }
 }
+
+export type AuthSession = {
+  token: string
+  user: { id: string; email: string; name: string; role: string; avatar?: string }
+}
+
+// loginDemo trades a demo account name for a real session token. The API only
+// issues these for its two fixed demo accounts.
+export const loginDemo = (account: 'creator' | 'backer'): Promise<AuthSession> =>
+  request<AuthSession>('/auth/demo', { method: 'POST', body: { account } })
+
+// exchangeFirebaseToken trades a Firebase ID token for a CineFund session.
+export const exchangeFirebaseToken = (idToken: string, role: string): Promise<AuthSession> =>
+  request<AuthSession>('/auth/firebase', { method: 'POST', body: { id_token: idToken, role } })
 
 function getMergedDemoCampaigns(): Campaign[] {
   let campaigns = DEMO_CAMPAIGNS
@@ -383,6 +420,20 @@ export function recordUserPledge(pledge: UserPledgeRecord) {
   }
 }
 
+// updateUserPledgeStatus keeps the locally listed pledge in step with the API.
+export function updateUserPledgeStatus(id: string, status: string) {
+  try {
+    const all = getUserPledges()
+    const found = all.find(p => p.id === id)
+    if (!found) return
+    found.status = status
+    localStorage.setItem('cinefund_user_pledges', JSON.stringify(all))
+    window.dispatchEvent(new Event('cinefund_pledge_added'))
+  } catch {
+    // ignore
+  }
+}
+
 export const getConfig = async (): Promise<Config> => {
   try {
     return await request<Config>('/config')
@@ -399,7 +450,8 @@ export const getCampaigns = async (): Promise<Campaign[]> => {
       ...c,
       poster_url: c.poster_url || getPosterForCampaign(c),
     }))
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     demoModeActive = true
     return getMergedDemoCampaigns()
   }
@@ -412,14 +464,12 @@ export const getCampaign = async (id: string): Promise<Campaign> => {
       ...camp,
       poster_url: camp.poster_url || getPosterForCampaign(camp),
     }
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     demoModeActive = true
-    const all = getMergedDemoCampaigns()
-    const found = all.find(c => c.id === id) || all[0]
-    return {
-      ...found,
-      poster_url: found.poster_url || getPosterForCampaign(found),
-    }
+    const found = getMergedDemoCampaigns().find(c => c.id === id)
+    if (!found) throw new ApiError('Film not found.', 404, 'CAMPAIGN_NOT_FOUND')
+    return found
   }
 }
 
@@ -439,7 +489,8 @@ export const createCampaign = async (data: {
       cover_key: data.poster_url,
     }
     return await request<Campaign>('/campaigns', { method: 'POST', body: payload })
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     const poster = data.poster_url?.trim() || getPosterForCampaign({ category: data.category })
     const newCamp: Campaign = {
       id: `camp-${Date.now()}`,
@@ -471,7 +522,8 @@ export const createCampaign = async (data: {
 export const publishCampaign = async (id: string): Promise<Campaign> => {
   try {
     return await request<Campaign>(`/campaigns/${id}/publish`, { method: 'POST' })
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     demoModeActive = true
     const all = getMergedDemoCampaigns()
     const found = all.find(c => c.id === id)
@@ -495,7 +547,8 @@ export const publishCampaign = async (id: string): Promise<Campaign> => {
 export const getTiers = async (id: string): Promise<Tier[]> => {
   try {
     return await request<Tier[]>(`/campaigns/${id}/tiers`)
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     try {
       const customTiers = JSON.parse(localStorage.getItem('cinefund_custom_tiers') || '{}')
       if (customTiers[id] && customTiers[id].length > 0) {
@@ -514,7 +567,8 @@ export const addTier = async (
 ): Promise<Tier> => {
   try {
     return await request<Tier>(`/campaigns/${id}/tiers`, { method: 'POST', body: data })
-  } catch {
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
     const newTier: Tier = {
       id: `tier-${Date.now()}`,
       campaign_id: id,
@@ -550,7 +604,11 @@ export const createPledge = async (
   const matchedTier = tierList.find(t => t.id === data.tier_id)
 
   try {
-    const pledge = await request<Pledge>(`/campaigns/${id}/pledges`, { method: 'POST', body: data })
+    // The API takes the backer from the session token, not the body.
+    const pledge = await request<Pledge>(`/campaigns/${id}/pledges`, {
+      method: 'POST',
+      body: { tier_id: data.tier_id, amount: data.amount, message: data.message, anonymous: data.anonymous },
+    })
     recordUserPledge({
       id: pledge.id,
       campaign_id: id,
@@ -559,7 +617,7 @@ export const createPledge = async (
       tier_title: matchedTier?.title || 'Backer Pledge',
       amount: data.amount,
       currency: 'INR',
-      status: 'CAPTURED',
+      status: pledge.status, // CREATED until the payment is confirmed
       order_id: pledge.order_id,
       backer_id: data.backer_id,
       backer_name: data.backer_name || 'Anonymous Patron',
@@ -567,8 +625,9 @@ export const createPledge = async (
       created_at: new Date().toISOString(),
     })
     return pledge
-  } catch {
-    // In demo mode: simulate successful pledge and double-entry ledger credit
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
+    // Backend unreachable: simulate the pledge in the offline demo vault.
     const c = DEMO_CAMPAIGNS.find(item => item.id === id)
     if (c) {
       c.raised_amount += data.amount
@@ -605,20 +664,14 @@ export const createPledge = async (
   }
 }
 
-export const confirmPledge = async (pledgeId: string, checkout: unknown): Promise<Pledge & { status: string }> => {
-  try {
-    return await request<Pledge & { status: string }>(`/pledges/${pledgeId}/confirm`, { method: 'POST', body: checkout })
-  } catch {
-    return {
-      id: pledgeId,
-      campaign_id: '11111111-1111-1111-1111-111111111111',
-      tier_id: null,
-      amount: 50000,
-      currency: 'INR',
-      status: 'CAPTURED',
-      order_id: `order_settled_${Date.now()}`,
-    }
+export const confirmPledge = async (pledgeId: string, checkout: unknown): Promise<{ id: string; status: string }> => {
+  // Pledges made while the backend was unreachable only exist in this browser.
+  if (pledgeId.startsWith('pledge-demo-')) {
+    return { id: pledgeId, status: 'CAPTURED' }
   }
+  const result = await request<{ id: string; status: string }>(`/pledges/${pledgeId}/confirm`, { method: 'POST', body: checkout })
+  updateUserPledgeStatus(pledgeId, result.status)
+  return result
 }
 
 export type PresignResponse = {
@@ -639,63 +692,69 @@ export const completeUpload = async (assetId: string): Promise<void> => {
   await request<void>(`/uploads/${assetId}/complete`, { method: 'POST' })
 }
 
+// simulateOfflineUpload stands in for the upload in the offline demo vault.
+async function simulateOfflineUpload(file: File, campaignId?: string, onProgress?: (pct: number) => void): Promise<string> {
+  demoModeActive = true
+  const localBlobUrl = URL.createObjectURL(file)
+  if (campaignId) {
+    try {
+      localStorage.setItem(`cinefund_video_${campaignId}`, localBlobUrl)
+    } catch {
+      // ignore
+    }
+  }
+  if (onProgress) {
+    for (let pct = 25; pct <= 100; pct += 25) {
+      onProgress(pct)
+      await new Promise(r => setTimeout(r, 60))
+    }
+  }
+  return `asset-demo-${Date.now()}`
+}
+
 export const uploadVideoFileToS3 = async (
   file: File,
   ownerId: string,
   campaignId?: string,
   onProgress?: (pct: number) => void
 ): Promise<string> => {
+  // 1. Fetch presigned S3 PUT URL from CineFund API
+  let presign: PresignResponse
   try {
-    // 1. Fetch presigned S3 PUT URL from CineFund API
-    const presign = await getPresignedUploadUrl({
+    presign = await getPresignedUploadUrl({
       owner_id: ownerId,
       campaign_id: campaignId,
       purpose: 'FILM',
       content_type: file.type || 'video/mp4',
     })
+  } catch (err) {
+    if (!isBackendUnavailable(err)) throw err
+    return simulateOfflineUpload(file, campaignId, onProgress)
+  }
 
-    // 2. Direct browser-to-S3 upload with live progress tracking
-    await new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('PUT', presign.upload_url, true)
-      xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
-      if (xhr.upload && onProgress) {
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            onProgress(Math.round((e.loaded / e.total) * 100))
-          }
+  // The backend is up from here on, so any failure is real and is reported.
+  // 2. Direct browser-to-S3 upload with live progress tracking
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('PUT', presign.upload_url, true)
+    xhr.setRequestHeader('Content-Type', file.type || 'video/mp4')
+    if (xhr.upload && onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100))
         }
       }
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) resolve()
-        else reject(new Error(`S3 direct upload failed with HTTP status ${xhr.status}`))
-      }
-      xhr.onerror = () => reject(new Error('Network error during S3 direct upload'))
-      xhr.send(file)
-    })
-
-    // 3. Notify CineFund backend to verify S3 object and enqueue transcode job
-    await completeUpload(presign.asset_id)
-
-    return presign.asset_id
-  } catch {
-    // Resilient fallback for cold backend / offline demo mode
-    demoModeActive = true
-    const localBlobUrl = URL.createObjectURL(file)
-    if (campaignId) {
-      try {
-        localStorage.setItem(`cinefund_video_${campaignId}`, localBlobUrl)
-      } catch {
-        // ignore
-      }
     }
-    // Simulate progressive streaming upload
-    if (onProgress) {
-      for (let pct = 25; pct <= 100; pct += 25) {
-        onProgress(pct)
-        await new Promise(r => setTimeout(r, 60))
-      }
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve()
+      else reject(new Error(`S3 direct upload failed with HTTP status ${xhr.status}`))
     }
-    return `asset-demo-${Date.now()}`
-  }
+    xhr.onerror = () => reject(new Error('Network error during S3 direct upload'))
+    xhr.send(file)
+  })
+
+  // 3. Notify CineFund backend to verify S3 object and enqueue transcode job
+  await completeUpload(presign.asset_id)
+
+  return presign.asset_id
 }

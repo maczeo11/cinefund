@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { rupees } from '../format'
 import { getUserPledges, FALLBACK_POSTER_SVG, type UserPledgeRecord } from '../api'
-import { getActiveUser, setActiveUser as setGlobalActiveUser, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
+import { getActiveUser, signInAsDemo, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
 
 type LedgerEntry = {
   id: string
@@ -19,6 +19,7 @@ export default function Pledges() {
   const [filterMode, setFilterMode] = useState<'my' | 'all'>('my')
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([])
   const [loading, setLoading] = useState(true)
+  const [switchError, setSwitchError] = useState<string | null>(null)
 
   const reloadPledges = () => {
     const user = getActiveUser()
@@ -169,14 +170,17 @@ export default function Pledges() {
                 <button
                   type="button"
                   onClick={() => {
-                    setGlobalActiveUser(DEMO_USERS[1])
-                    setFilterMode('my')
+                    setSwitchError(null)
+                    signInAsDemo(DEMO_USERS[1])
+                      .then(() => setFilterMode('my'))
+                      .catch(err => setSwitchError((err as Error).message))
                   }}
                   className="px-4 py-2 rounded-lg border border-amber/40 bg-amber/10 text-amber text-xs font-mono hover:bg-amber/20 transition-colors"
                 >
                   ⚡ Switch to Ravi (Demo Backer)
                 </button>
               )}
+              {switchError && <p className="w-full text-xs text-crimson">{switchError}</p>}
               <button
                 type="button"
                 onClick={() => setFilterMode('all')}

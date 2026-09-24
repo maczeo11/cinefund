@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, getCampaignVideo, playbackMasterUrl, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
+import { ApiError, getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, getCampaignVideo, playbackMasterUrl, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
 import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
@@ -48,7 +48,10 @@ export default function CampaignDetail({ id, onBack }: Props) {
     setLoading(true)
     Promise.all([refresh(), getConfig()])
       .then(([, cfg]) => setCheckoutKey((cfg as { razorpay_key_id?: string }).razorpay_key_id || ''))
-      .catch(err => setError(`Live backend error: ${(err as Error).message} — check VITE_API_BASE`))
+      .catch(err => {
+        const notFound = err instanceof ApiError && (err.status === 404 || err.code === 'INVALID_ID')
+        setError(notFound ? 'This film could not be found.' : `Live backend error: ${(err as Error).message} — check VITE_API_BASE`)
+      })
       .finally(() => setLoading(false))
   }, [id, refresh])
 
@@ -114,7 +117,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
     setPhase('confirming')
     try {
       const result = await confirmPledge(pledgeId, checkout)
-      if ((result as { status: string }).status !== 'CAPTURED') {
+      if (result.status === 'REFUND_PENDING') {
+        // The payment landed after the reward sold out; it is marked for refund.
+        await refresh()
+        setPledgeError('That reward sold out while you were paying. Your payment is recorded and marked for a full refund.')
+        setPhase('idle')
+        return
+      }
+      if (result.status !== 'CAPTURED') {
         setPledgeError('Payment received. It will show up here once it settles.')
         setPhase('idle')
         return
@@ -602,7 +612,6 @@ export default function CampaignDetail({ id, onBack }: Props) {
       <AuthModal
         isOpen={authModalOpen}
         onClose={() => setAuthModalOpen(false)}
-        initialTab="signin"
       />
     </div>
   )

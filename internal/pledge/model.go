@@ -20,8 +20,9 @@ const (
 	StatusSettled       Status = "SETTLED"        // campaign paid out
 )
 
+// FAILED is not terminal: Checkout lets the backer retry on the same order, so
+// a capture can still follow a failed attempt.
 var terminal = map[Status]bool{
-	StatusFailed:       true,
 	StatusRefunded:     true,
 	StatusSettled:      true,
 	StatusRefundFailed: true,
@@ -38,6 +39,9 @@ var allowed = map[Status]map[Status]bool{
 	StatusAuthorized: {
 		StatusCaptured: true,
 		StatusFailed:   true, // capture failed / amount mismatch
+	},
+	StatusFailed: {
+		StatusCaptured: true, // a retry on the same order succeeded
 	},
 	StatusCaptured: {
 		StatusRefundPending: true, // campaign failed / cancelled / backer cancel
@@ -71,6 +75,7 @@ type Pledge struct {
 	Anonymous         bool
 	Message           string
 	Status            Status
+	FailureReason     string // why the pledge failed or is being refunded
 	ProviderOrderID   string
 	ProviderPaymentID string
 	CapturedAt        *time.Time

@@ -58,7 +58,7 @@ func (q *pgQueries) GetPledgeForUpdate(ctx context.Context, id uuid.UUID) (*Pled
 	row := q.tx.QueryRow(ctx, `
 		SELECT id, campaign_id, backer_id, tier_id, amount, currency, anonymous,
 		       message, status, COALESCE(provider_order_id,''), COALESCE(provider_payment_id,''),
-		       captured_at, refunded_at, created_at
+		       captured_at, refunded_at, created_at, COALESCE(failure_reason,'')
 		  FROM pledges WHERE id = $1 FOR UPDATE`, id)
 	return scanPledge(row)
 }
@@ -67,7 +67,7 @@ func (q *pgQueries) GetPledgeByOrderID(ctx context.Context, orderID string) (*Pl
 	row := q.tx.QueryRow(ctx, `
 		SELECT id, campaign_id, backer_id, tier_id, amount, currency, anonymous,
 		       message, status, COALESCE(provider_order_id,''), COALESCE(provider_payment_id,''),
-		       captured_at, refunded_at, created_at
+		       captured_at, refunded_at, created_at, COALESCE(failure_reason,'')
 		  FROM pledges WHERE provider_order_id = $1 FOR UPDATE`, orderID)
 	return scanPledge(row)
 }
@@ -99,6 +99,17 @@ func (q *pgQueries) MarkPledgeCaptured(ctx context.Context, id uuid.UUID, paymen
 	_, err := q.tx.Exec(ctx, `
 		UPDATE pledges SET status='CAPTURED', provider_payment_id=$2, captured_at=$3
 		 WHERE id=$1`, id, paymentID, at)
+	return err
+}
+
+// MarkPledgeRefundPending records a captured payment that is being handed back
+// rather than counted. The payment id and capture time stay on the row so the
+// refund knows what to return.
+func (q *pgQueries) MarkPledgeRefundPending(ctx context.Context, id uuid.UUID, paymentID string, at time.Time, reason string) error {
+	_, err := q.tx.Exec(ctx, `
+		UPDATE pledges SET status='REFUND_PENDING', provider_payment_id=$2,
+		                   captured_at=$3, failure_reason=$4
+		 WHERE id=$1`, id, paymentID, at, reason)
 	return err
 }
 
@@ -141,16 +152,23 @@ func (q *pgQueries) InsertPaymentEvent(ctx context.Context, evt PaymentEvent) er
 	return err
 }
 
+// InsertLedgerTransaction uses ON CONFLICT rather than catching the unique
+// violation: an error inside a Postgres transaction aborts it, so every later
+// statement would fail even if the violation were treated as success.
 func (q *pgQueries) InsertLedgerTransaction(ctx context.Context, t LedgerTxn) (uuid.UUID, error) {
-	id := uuid.New()
-	_, err := q.tx.Exec(ctx, `
+	var id uuid.UUID
+	err := q.tx.QueryRow(ctx, `
 		INSERT INTO ledger_transactions (id, kind, reference_type, reference_id, memo)
-		VALUES ($1,$2,$3,$4,$5)`,
-		id, t.Kind, t.ReferenceType, t.ReferenceID, t.Memo)
+		VALUES ($1,$2,$3,$4,$5)
+		ON CONFLICT ON CONSTRAINT uq_ledger_txn_reference DO NOTHING
+		RETURNING id`,
+		uuid.New(), t.Kind, t.ReferenceType, t.ReferenceID, t.Memo).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrLedgerTxnExists
+	}
 	if err != nil {
 		return uuid.Nil, err
 	}
-	t.ID = id
 	return id, nil
 }
 
@@ -192,7 +210,7 @@ func scanPledge(row rowScanner) (*Pledge, error) {
 	var capturedAt, refundedAt *time.Time
 	err := row.Scan(&p.ID, &p.CampaignID, &p.BackerID, &p.TierID, &p.Amount, &p.Currency,
 		&p.Anonymous, &p.Message, &p.Status, &p.ProviderOrderID, &p.ProviderPaymentID,
-		&capturedAt, &refundedAt, &p.CreatedAt)
+		&capturedAt, &refundedAt, &p.CreatedAt, &p.FailureReason)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
