@@ -2,63 +2,23 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { rupees } from '../format'
 import { getUserPledges, FALLBACK_POSTER_SVG, type UserPledgeRecord } from '../api'
-import { getActiveUser, signInAsDemo, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
+import { signInAsDemo, useActiveUser } from '../auth'
+import Avatar from './Avatar.tsx'
 
-type LedgerEntry = {
-  id: string
-  pledge_id: string
-  account: string
-  type: 'DEBIT' | 'CREDIT'
-  amount: number
-  created_at: string
-}
-
+// Pledge history is kept in this browser (localStorage); the server is the
+// record of truth for payments and the ledger.
 export default function Pledges() {
-  const [activeUser, setActiveUser] = useState<UserProfile | null>(getActiveUser())
+  const activeUser = useActiveUser()
   const [userPledges, setUserPledges] = useState<UserPledgeRecord[]>([])
   const [filterMode, setFilterMode] = useState<'my' | 'all'>('my')
-  const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([])
-  const [loading, setLoading] = useState(true)
-  const [switchError, setSwitchError] = useState<string | null>(null)
-
-  const reloadPledges = () => {
-    const user = getActiveUser()
-    setActiveUser(user)
-    if (filterMode === 'my' && user) {
-      setUserPledges(getUserPledges(user.id))
-    } else {
-      setUserPledges(getUserPledges())
-    }
-  }
 
   useEffect(() => {
-    reloadPledges()
-
-    const handleUpdate = () => reloadPledges()
-    window.addEventListener('cinefund_auth_change', handleUpdate)
-    window.addEventListener('cinefund_pledge_added', handleUpdate)
-
-    // Try to fetch ledger if live backend is running
-    const base = (import.meta.env.VITE_API_BASE as string) || '/api/v1'
-    fetch(`${base}/ledger`)
-      .then(r => (r.ok ? r.json() : []))
-      .then(d => setLedgerEntries(Array.isArray(d) ? d : []))
-      .catch(() => setLedgerEntries([]))
-      .finally(() => setLoading(false))
-
-    return () => {
-      window.removeEventListener('cinefund_auth_change', handleUpdate)
-      window.removeEventListener('cinefund_pledge_added', handleUpdate)
-    }
-  }, [filterMode])
-
-  if (loading) {
-    return (
-      <div className="py-12 text-center text-sm font-mono text-silver-dim">
-        <span className="inline-block animate-spin mr-2">✦</span> Reading PostgreSQL Escrow Ledger…
-      </div>
-    )
-  }
+    const reload = () =>
+      setUserPledges(filterMode === 'my' && activeUser ? getUserPledges(activeUser.id) : getUserPledges())
+    reload()
+    window.addEventListener('cinefund_pledge_added', reload)
+    return () => window.removeEventListener('cinefund_pledge_added', reload)
+  }, [filterMode, activeUser])
 
   const myCount = activeUser ? getUserPledges(activeUser.id).length : 0
   const allCount = getUserPledges().length
@@ -82,13 +42,7 @@ export default function Pledges() {
 
         {activeUser && (
           <div className="p-3 rounded-xl bg-celluloid border border-white/10 flex items-center gap-3 self-start md:self-auto shadow-md">
-            <div className="h-9 w-9 rounded-xl bg-gradient-to-tr from-amber to-amber-bright text-ink font-cinema font-bold text-xs flex items-center justify-center overflow-hidden shrink-0">
-              {activeUser.photoURL || (activeUser.avatar && activeUser.avatar.startsWith('http')) ? (
-                <img src={activeUser.photoURL || activeUser.avatar} alt={activeUser.name} className="w-full h-full object-cover" />
-              ) : (
-                activeUser.avatar || (activeUser.name ? activeUser.name[0].toUpperCase() : '👤')
-              )}
-            </div>
+            <Avatar user={activeUser} className="h-9 w-9 rounded-xl text-xs bg-gradient-to-tr from-amber to-amber-bright" />
             <div>
               <span className="text-xs font-bold text-silver block">{activeUser.name}</span>
               <span className="text-[10px] font-mono text-amber">{activeUser.role} Profile</span>
@@ -120,7 +74,7 @@ export default function Pledges() {
                 : 'border-white/10 text-silver-dim hover:text-silver hover:bg-white/[0.04]'
             }`}
           >
-            All Platform Pledges ({allCount})
+            All on This Device ({allCount})
           </button>
         </div>
         <span className="text-xs font-mono text-silver-dim hidden sm:inline">
@@ -170,17 +124,17 @@ export default function Pledges() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSwitchError(null)
-                    signInAsDemo(DEMO_USERS[1])
+                    signInAsDemo('backer')
                       .then(() => setFilterMode('my'))
-                      .catch(err => setSwitchError((err as Error).message))
+                      .catch(() => {
+                        // The navbar's sign-in flow reports demo-login errors.
+                      })
                   }}
                   className="px-4 py-2 rounded-lg border border-amber/40 bg-amber/10 text-amber text-xs font-mono hover:bg-amber/20 transition-colors"
                 >
                   ⚡ Switch to Ravi (Demo Backer)
                 </button>
               )}
-              {switchError && <p className="w-full text-xs text-crimson">{switchError}</p>}
               <button
                 type="button"
                 onClick={() => setFilterMode('all')}
@@ -258,39 +212,6 @@ export default function Pledges() {
           </div>
         )}
       </div>
-
-      {/* PostgreSQL Double-Entry Ledger Invariant Audit */}
-      {ledgerEntries.length > 0 && (
-        <div className="pt-6 border-t border-white/[0.08]">
-          <h3 className="font-cinema text-lg font-bold text-silver mb-3">
-            PostgreSQL Double-Entry Accounting Log
-          </h3>
-          <div className="tw-card !p-0 overflow-hidden">
-            <table className="w-full text-xs font-mono">
-              <thead className="bg-white/[0.04] border-b border-white/10 text-silver-dim text-[11px]">
-                <tr>
-                  <th className="text-left px-4 py-3 font-semibold">Transaction Type</th>
-                  <th className="text-left px-4 py-3 font-semibold">Account Destination</th>
-                  <th className="text-right px-4 py-3 font-semibold">Paise Amount</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledgerEntries.slice(0, 10).map(e => (
-                  <tr key={e.id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                    <td className="px-4 py-2.5 font-bold">
-                      <span className={e.type === 'DEBIT' ? 'text-amber' : 'text-emerald-400'}>
-                        {e.type}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-silver-dim">{e.account}</td>
-                    <td className="px-4 py-2.5 text-right text-silver font-bold">{rupees(e.amount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* Engineering Note */}
       <div className="p-4 rounded-xl bg-black/40 border border-white/[0.08] text-xs font-mono text-silver-dim flex items-center justify-between gap-4">

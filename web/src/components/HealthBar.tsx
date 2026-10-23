@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getApiBase, getConfig } from '../api'
+import { getApiBase } from '../api'
 
 type Ready = { postgres: string; redis: string }
 type Mode = 'live' | 'fake' | 'archive'

@@ -1,9 +1,12 @@
-import { useState, useEffect } from 'react'
-import { createCampaign, publishCampaign, addTier, uploadVideoFileToS3, POSTER_PRESETS, getPosterForCampaign, FALLBACK_POSTER_SVG } from '../api'
+import { useState } from 'react'
+import { ApiError, createCampaign, publishCampaign, addTier, uploadVideoFileToS3, POSTER_PRESETS, getPosterForCampaign, FALLBACK_POSTER_SVG } from '../api'
 import { toPaise } from '../format'
-import AuthModal, { getActiveUser, signInAsDemo, DEMO_USERS, type UserProfile } from './AuthModal.tsx'
+import AuthModal from './AuthModal.tsx'
+import Avatar from './Avatar.tsx'
+import { signInAsDemo, useActiveUser } from '../auth'
 
 const CATEGORIES = ['DRAMA', 'COMEDY', 'DOCUMENTARY', 'ANIMATION', 'HORROR', 'SCIFI', 'EXPERIMENTAL'] as const
+const MAX_VIDEO_BYTES = 500 * 1024 * 1024
 
 type Props = { onDone: () => void }
 
@@ -18,14 +21,9 @@ export default function CampaignForm({ onDone }: Props) {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [demoError, setDemoError] = useState<string | null>(null)
 
-  const [activeUser, setActiveUserLocal] = useState<UserProfile | null>(getActiveUser())
-
-  useEffect(() => {
-    const handleAuthChange = () => setActiveUserLocal(getActiveUser())
-    window.addEventListener('cinefund_auth_change', handleAuthChange)
-    return () => window.removeEventListener('cinefund_auth_change', handleAuthChange)
-  }, [])
+  const activeUser = useActiveUser()
 
   const set = <T extends object>(obj: T, setter: React.Dispatch<React.SetStateAction<T>>) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
     setter({ ...obj, [e.target.name]: e.target.value })
@@ -33,7 +31,7 @@ export default function CampaignForm({ onDone }: Props) {
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0]
-      if (file.size > 500 * 1024 * 1024) {
+      if (file.size > MAX_VIDEO_BYTES) {
         setError(`File is ${(file.size / (1024 * 1024)).toFixed(1)}MB. Maximum allowed upload size is 500MB.`)
       } else {
         setError(null)
@@ -53,14 +51,31 @@ export default function CampaignForm({ onDone }: Props) {
   async function submit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    if (!activeUser) return
     if (!film.title || !film.tagline || !film.goal) {
       setError('Title, tagline, and funding goal are required.')
       return
     }
+    if (film.title.trim().length < 3) {
+      setError('Title must be at least 3 characters.')
+      return
+    }
+    if (toPaise(film.goal) < 100_000) {
+      setError('The funding goal must be at least ₹1,000.')
+      return
+    }
+    if (reward.title && reward.min && toPaise(reward.min) < 10_000) {
+      setError('A reward tier must start at ₹100 or more.')
+      return
+    }
+    if (videoFile && videoFile.size > MAX_VIDEO_BYTES) {
+      setError('The reel is larger than the 500MB upload limit.')
+      return
+    }
     setSubmitting(true)
 
-    const creatorId = activeUser?.id || DEMO_USERS[0].id
-    const creatorName = activeUser?.name || 'Ava Chen'
+    const creatorId = activeUser.id
+    const creatorName = activeUser.name
     const finalPoster = posterUrl.trim() || getPosterForCampaign({ category: film.category })
 
     try {
@@ -99,7 +114,11 @@ export default function CampaignForm({ onDone }: Props) {
       await publishCampaign(campaign.id)
       onDone()
     } catch (err) {
-      setError((err as Error).message)
+      setError(
+        err instanceof ApiError && err.status === 401
+          ? 'Your session is not signed in to the server. Sign in with Google or the Director demo to publish.'
+          : (err as Error).message
+      )
       setSubmitting(false)
       setUploadProgress(null)
       setUploadStage(null)
@@ -134,16 +153,18 @@ export default function CampaignForm({ onDone }: Props) {
           <button
             type="button"
             onClick={() => {
-              setError(null)
-              signInAsDemo(DEMO_USERS[0])
-                .then(setActiveUserLocal)
-                .catch(err => setError((err as Error).message))
+              setDemoError(null)
+              signInAsDemo('creator').catch(err => setDemoError((err as Error).message))
             }}
             className="w-full py-2.5 px-4 rounded-xl border border-white/15 bg-white/[0.04] hover:bg-white/[0.08] text-silver text-xs font-mono transition-all cursor-pointer"
           >
             ⚡ Test with Director Demo (Ava Chen)
           </button>
-          {error && <p className="text-xs text-crimson">{error}</p>}
+          {demoError && (
+            <p role="alert" className="text-xs text-crimson">
+              {demoError}
+            </p>
+          )}
         </div>
 
         <AuthModal
@@ -159,13 +180,7 @@ export default function CampaignForm({ onDone }: Props) {
       {/* Session Identity Ribbon */}
       <div className="p-3 rounded-xl bg-[#12151E] border border-white/10 mb-6 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="h-8 w-8 rounded-lg bg-amber text-ink font-cinema font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden">
-            {activeUser.photoURL || (activeUser.avatar && activeUser.avatar.startsWith('http')) ? (
-              <img src={activeUser.photoURL || activeUser.avatar} alt={activeUser.name} className="w-full h-full object-cover" />
-            ) : (
-              activeUser.avatar || (activeUser.name ? activeUser.name[0].toUpperCase() : 'A')
-            )}
-          </div>
+          <Avatar user={activeUser} className="h-8 w-8 rounded-lg text-xs" />
           <div className="min-w-0">
             <span className="text-xs font-bold text-silver block truncate">
               {activeUser.name}

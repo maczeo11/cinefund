@@ -1,8 +1,11 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { ApiError, getCampaign, getTiers, getConfig, createPledge, confirmPledge, uploadVideoFileToS3, getPosterForCampaign, getCampaignVideo, playbackMasterUrl, FALLBACK_POSTER_SVG, type Campaign, type Tier } from '../api'
 import { rupees, toPaise, percentOf, daysLeft } from '../format'
 import VideoPlayer from './VideoPlayer.tsx'
-import AuthModal, { getActiveUser, type UserProfile } from './AuthModal.tsx'
+import AuthModal from './AuthModal.tsx'
+import Avatar from './Avatar.tsx'
+import { useActiveUser } from '../auth'
+import { loadRazorpay, type RazorpayCheckout } from '../razorpay'
 
 const CINEMATIC_HLS_STREAM = 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8'
 const PRESET_AMOUNTS = [500, 1000, 2500, 5000] as const
@@ -25,9 +28,10 @@ export default function CampaignDetail({ id, onBack }: Props) {
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const [copied, setCopied] = useState(false)
 
-  const [videoSrc, setVideoSrc] = useState<string>(() => {
-    return localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM
-  })
+  const [videoSrc, setVideoSrc] = useState<string>(CINEMATIC_HLS_STREAM)
+  // blob: URL of a just-uploaded local file, previewed until the transcode is
+  // ready. Blob URLs die with the page, so they are never persisted.
+  const previewUrl = useRef<string | null>(null)
   // True when the reel streams from the auth-gated playback API (private
   // bucket + short-lived segment URLs) instead of the public fallback.
   const [videoAuth, setVideoAuth] = useState(false)
@@ -50,17 +54,21 @@ export default function CampaignDetail({ id, onBack }: Props) {
       .then(([, cfg]) => setCheckoutKey((cfg as { razorpay_key_id?: string }).razorpay_key_id || ''))
       .catch(err => {
         const notFound = err instanceof ApiError && (err.status === 404 || err.code === 'INVALID_ID')
-        setError(notFound ? 'This film could not be found.' : `Live backend error: ${(err as Error).message} — check VITE_API_BASE`)
+        setError(notFound ? 'This film could not be found.' : (err as Error).message)
       })
       .finally(() => setLoading(false))
   }, [id, refresh])
+
+  useEffect(() => () => {
+    if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+  }, [])
 
   // Prefer the protected transcode output when the backend has a READY reel
   // for this campaign; otherwise keep the local/demo fallback.
   useEffect(() => {
     let cancelled = false
     setVideoAuth(false)
-    setVideoSrc(localStorage.getItem(`cinefund_video_${id}`) || CINEMATIC_HLS_STREAM)
+    setVideoSrc(CINEMATIC_HLS_STREAM)
     getCampaignVideo(id)
       .then(v => {
         if (!cancelled && v.status === 'READY' && v.asset_id) {
@@ -76,13 +84,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
     }
   }, [id])
 
-  const [activeUser, setActiveUser] = useState<UserProfile | null>(getActiveUser())
-
-  useEffect(() => {
-    const handleAuthChange = () => setActiveUser(getActiveUser())
-    window.addEventListener('cinefund_auth_change', handleAuthChange)
-    return () => window.removeEventListener('cinefund_auth_change', handleAuthChange)
-  }, [])
+  const activeUser = useActiveUser()
 
   function selectTier(t: Tier) {
     if (tier?.id === t.id) {
@@ -135,15 +137,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
       setMessage('')
       setTier(null)
     } catch (err) {
-      setPledgeError(`Payment went through but we could not record it: ${(err as Error).message}`)
+      // We can't tell whether money moved, only that the server didn't confirm
+      // it. Payment webhooks settle the pledge independently of this call.
+      setPledgeError(`We couldn't confirm your payment yet (${(err as Error).message}). If you were charged, it will appear in My Pledges once it settles.`)
       setPhase('idle')
     }
   }
 
-  function openCheckout(pledge: { id: string; order_id: string; amount: number; currency?: string }) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Rzp = (window as any).Razorpay
-    if (!Rzp) return
+  function openCheckout(Rzp: RazorpayCheckout, pledge: { id: string; order_id: string; amount: number; currency?: string }) {
     const rzp = new Rzp({
       key: checkoutKey,
       order_id: pledge.order_id,
@@ -160,7 +161,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
         },
       },
     })
-    rzp.on('payment.failed', (res: { error?: { description?: string } }) => {
+    rzp.on('payment.failed', res => {
       setPledgeError(res.error?.description || 'The payment was declined.')
       setPhase('idle')
     })
@@ -180,15 +181,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
       setPledgeError(`${tier.title} starts at ${rupees(tier.min_amount)}.`)
       return
     }
-    const currentUser = getActiveUser()
-    if (!currentUser) {
+    if (!activeUser) {
       setAuthModalOpen(true)
       setPledgeError('Please sign in or select a demo account to back this film.')
       return
     }
     setPhase('ordering')
-    const backerId = currentUser.id
-    const backerName = currentUser.name
+    const backerId = activeUser.id
+    const backerName = activeUser.name
     try {
       const pledge = await createPledge(id, {
         backer_id: backerId,
@@ -198,37 +198,44 @@ export default function CampaignDetail({ id, onBack }: Props) {
         message,
         anonymous: false,
       })
-      if (checkoutKey && (window as unknown as { Razorpay?: unknown }).Razorpay) {
-        openCheckout(pledge as unknown as { id: string; order_id: string; amount: number })
+      if (checkoutKey && !pledge.id.startsWith('pledge-demo-')) {
+        // Real gateway: the user must complete Razorpay Checkout. If the script
+        // can't load we stop here rather than pretending the payment happened.
+        openCheckout(await loadRazorpay(), pledge)
       } else {
-        await confirm((pledge as { id: string }).id, { razorpay_order_id: (pledge as { order_id: string }).order_id })
+        // Fake gateway (dev) or offline demo: nothing to pay, settle directly.
+        await confirm(pledge.id, { razorpay_order_id: pledge.order_id })
       }
     } catch (err) {
-      setPledgeError((err as Error).message)
+      if (err instanceof ApiError && err.status === 401) {
+        setAuthModalOpen(true)
+        setPledgeError('Your session is not signed in to the server. Sign in with Google or a demo profile to back this film.')
+      } else {
+        setPledgeError((err as Error).message)
+      }
       setPhase('idle')
     }
   }
 
   async function handleVideoUpload() {
-    if (!uploadFile) return
+    if (!uploadFile || !activeUser) return
     setUploading(true)
     setUploadError(null)
     setUploadSuccess(null)
     setUploadProgress(0)
     try {
-      const activeUser = getActiveUser()
-      const ownerId = activeUser?.id || '00000000-0000-0000-0000-000000000001'
-      await uploadVideoFileToS3(uploadFile, ownerId, id, (pct) => {
+      const assetId = await uploadVideoFileToS3(uploadFile, activeUser.id, id, (pct) => {
         setUploadProgress(pct)
       })
-      const localUrl = URL.createObjectURL(uploadFile)
-      setVideoSrc(localUrl)
-      try {
-        localStorage.setItem(`cinefund_video_${id}`, localUrl)
-      } catch {
-        // quota fallback
-      }
-      setUploadSuccess(`Success! "${uploadFile.name}" streamed to AWS S3. Master player switched to your reel!`)
+      if (previewUrl.current) URL.revokeObjectURL(previewUrl.current)
+      previewUrl.current = URL.createObjectURL(uploadFile)
+      setVideoSrc(previewUrl.current)
+      setVideoAuth(false)
+      setUploadSuccess(
+        assetId.startsWith('asset-demo-')
+          ? `"${uploadFile.name}" is previewing locally (demo mode — nothing was uploaded).`
+          : `"${uploadFile.name}" uploaded. HLS transcoding is queued; the streamed reel replaces this local preview once it's ready.`
+      )
       setUploadFile(null)
       setUploadProgress(null)
     } catch (err) {
@@ -253,12 +260,9 @@ export default function CampaignDetail({ id, onBack }: Props) {
 
   const poster = getPosterForCampaign(campaign)
 
-  const isCreator = Boolean(
-    activeUser && (
-      activeUser.id === campaign.creator_id ||
-      activeUser.role === 'CREATOR'
-    )
-  )
+  // Only this campaign's own creator sees the uploader. (The server enforces
+  // the same rule; this just avoids offering an action that would be refused.)
+  const isCreator = activeUser?.id === campaign.creator_id
 
   const directorName = campaign.creator_name ||
     (activeUser && activeUser.id === campaign.creator_id ? activeUser.name :
@@ -514,17 +518,7 @@ export default function CampaignDetail({ id, onBack }: Props) {
               {/* Active Session Info Card */}
               <div className="p-2.5 rounded-xl bg-black/40 border border-white/10 mb-4 flex items-center justify-between text-xs">
                 <div className="flex items-center gap-2 min-w-0">
-                  <div className="h-7 w-7 rounded-full bg-amber/20 text-amber font-cinema font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden border border-white/10">
-                    {activeUser?.photoURL || (activeUser?.avatar && activeUser.avatar.startsWith('http')) ? (
-                      <img
-                        src={activeUser.photoURL || activeUser.avatar}
-                        alt={activeUser.name}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <span>{activeUser?.avatar || (activeUser?.name ? activeUser.name[0].toUpperCase() : '👤')}</span>
-                    )}
-                  </div>
+                  <Avatar user={activeUser} className="h-7 w-7 rounded-full text-xs border border-white/10" />
                   <div className="truncate">
                     <span className="text-silver font-medium block truncate">
                       {activeUser ? activeUser.name : 'Guest Visitor'}
@@ -542,9 +536,16 @@ export default function CampaignDetail({ id, onBack }: Props) {
                   >
                     Sign In
                   </button>
+                ) : activeUser.offline ? (
+                  <span
+                    className="text-[10px] font-mono text-silver-dim border border-white/15 px-1.5 py-0.5 rounded bg-white/[0.04]"
+                    title="The server could not be reached; this session only exists in this browser"
+                  >
+                    Offline demo
+                  </span>
                 ) : (
                   <span className="text-[10px] font-mono text-amber border border-amber/30 px-1.5 py-0.5 rounded bg-amber/10">
-                    Verified
+                    Signed in
                   </span>
                 )}
               </div>
@@ -592,14 +593,14 @@ export default function CampaignDetail({ id, onBack }: Props) {
                 <label className="label" htmlFor="amount">
                   {tier ? `Backing ${tier.title}` : 'Custom pledge amount'}
                 </label>
-                <input id="amount" type="number" min={1} value={amount} onChange={e => setAmount(e.target.value)} placeholder="₹500" />
+                <input id="amount" type="number" inputMode="decimal" min={1} step="any" value={amount} onChange={e => setAmount(e.target.value)} placeholder="₹500" />
               </div>
               <div className="field">
                 <label className="label" htmlFor="note">A note to the crew</label>
-                <input id="note" type="text" value={message} onChange={e => setMessage(e.target.value)} placeholder="Optional" />
+                <input id="note" type="text" maxLength={500} value={message} onChange={e => setMessage(e.target.value)} placeholder="Optional" />
               </div>
-              {pledgeError && <p className="notice">{pledgeError}</p>}
-              {phase === 'done' && <p className="notice notice-done">Recorded. Thank you for backing this one.</p>}
+              {pledgeError && <p className="notice" role="alert">{pledgeError}</p>}
+              {phase === 'done' && <p className="notice notice-done" role="status">Recorded. Thank you for backing this one.</p>}
               <button type="submit" className="btn btn-wide cursor-pointer" disabled={busy}>
                 {busy ? busyLabel[phase as Exclude<Phase, 'idle' | 'done'>] : activeUser ? 'Back this film' : 'Sign in & Back this film'}
               </button>
