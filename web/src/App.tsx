@@ -1,7 +1,9 @@
-import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react'
+import { Component, Suspense, lazy, useEffect, type ErrorInfo, type ReactNode } from 'react'
 import { BrowserRouter, Link, Routes, Route, useLocation, useNavigate, useParams } from 'react-router-dom'
 import Navbar from './components/Navbar.tsx'
 import CampaignList from './components/CampaignList.tsx'
+import DemoBanner from './components/DemoBanner.tsx'
+import { usePageTitle } from './usePageTitle'
 import './App.css'
 
 // The landing page is eager; everything else (and the heavy bits behind it —
@@ -14,7 +16,17 @@ const Watch = lazy(() => import('./components/Watch.tsx'))
 
 function ListPage() {
   const nav = useNavigate()
-  return <CampaignList onSelect={id => nav(`/campaigns/${id}`)} />
+  return <CampaignList onSelect={id => nav(`/campaigns/${id}`)} onStartCampaign={() => nav('/create')} />
+}
+
+// A new page should open at its top, but in-page links (#films, #watch) and
+// back/forward navigation keep their own scroll behaviour.
+function ScrollToTop() {
+  const { pathname, hash } = useLocation()
+  useEffect(() => {
+    if (!hash) window.scrollTo(0, 0)
+  }, [pathname, hash])
+  return null
 }
 
 function DetailPage() {
@@ -30,12 +42,13 @@ function CreatePage() {
 }
 
 function NotFound() {
+  usePageTitle('Page not found')
   return (
     <div className="py-24 text-center space-y-3">
-      <p className="font-cinema text-2xl text-silver">Reel not found</p>
-      <p className="text-sm text-silver-dim">That page doesn't exist.</p>
+      <p className="font-cinema text-2xl text-silver">Page not found</p>
+      <p className="text-sm text-silver-dim">That page doesn&rsquo;t exist or has moved.</p>
       <Link to="/" className="inline-block mt-2 px-4 py-2 rounded-lg bg-amber text-ink text-xs font-semibold">
-        Back to the Film Vault
+        Browse films
       </Link>
     </div>
   )
@@ -92,14 +105,16 @@ function AppShell() {
   const { pathname } = useLocation()
 
   return (
-    <div className="app bg-[#0C0E14] text-silver min-h-screen flex flex-col font-sans selection:bg-amber selection:text-ink">
+    <div className="app cinema-grade text-silver min-h-screen flex flex-col font-sans selection:bg-amber selection:text-ink">
       <a
         href="#main"
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:px-3 focus:py-2 focus:rounded-lg focus:bg-amber focus:text-ink"
       >
         Skip to content
       </a>
+      <ScrollToTop />
       <Navbar onHome={() => nav('/')} onCreate={() => nav('/create')} />
+      <DemoBanner />
 
       <main id="main" className="content flex-1 px-4 sm:px-6 py-6 max-w-7xl mx-auto w-full">
         <ErrorBoundary resetKey={pathname}>
@@ -108,6 +123,7 @@ function AppShell() {
               <Route path="/" element={<ListPage />} />
               <Route path="/campaigns/:id" element={<DetailPage />} />
               <Route path="/create" element={<CreatePage />} />
+              <Route path="/status" element={<Dashboard />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/pledges" element={<Pledges />} />
               <Route path="/watch" element={<Watch />} />
@@ -117,19 +133,31 @@ function AppShell() {
         </ErrorBoundary>
       </main>
 
-      <footer className="border-t border-white/[0.08] mt-16 py-8 px-4 sm:px-6 bg-[#12151E]/40 text-center text-xs text-silver-dim">
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 max-w-7xl mx-auto">
-          <div className="flex items-center gap-2">
-            <span className="font-cinema font-bold text-silver">
+      <footer className="border-t border-white/[0.08] mt-16 bg-celluloid/40 px-4 sm:px-6 py-10 text-sm text-silver-dim">
+        <div className="max-w-7xl mx-auto grid gap-8 sm:grid-cols-[1.4fr_1fr_1fr]">
+          <div>
+            <p className="font-cinema font-bold text-lg text-silver">
               CINE<span className="text-amber">FUND</span>
-            </span>
-            <span className="text-silver-faint">·</span>
-            <span>Celluloid Crowdfunding & HLS Streaming</span>
+            </p>
+            <p className="mt-2 max-w-xs leading-relaxed">
+              Fund independent films and watch them come to life. Back a project, and get your money back if it falls short.
+            </p>
           </div>
-          <p className="text-[11px] text-silver-faint font-mono">
-            Go 1.26 + PostgreSQL + Redis + AWS S3 + HLS Streaming • React 19 + TypeScript
-          </p>
+          <nav aria-label="Explore" className="space-y-2">
+            <p className="label">Explore</p>
+            <Link to="/" className="block hover:text-silver">Browse films</Link>
+            <Link to="/watch" className="block hover:text-silver">Watch</Link>
+            <Link to="/create" className="block hover:text-silver">Start a campaign</Link>
+          </nav>
+          <nav aria-label="Account" className="space-y-2">
+            <p className="label">Account</p>
+            <Link to="/pledges" className="block hover:text-silver">My pledges</Link>
+            <Link to="/status" className="block hover:text-silver">System status</Link>
+          </nav>
         </div>
+        <p className="max-w-7xl mx-auto mt-8 pt-6 border-t border-white/[0.06] text-xs text-silver-faint">
+          © {new Date().getFullYear()} CineFund. Payments are processed securely by Razorpay.
+        </p>
       </footer>
     </div>
   )

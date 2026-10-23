@@ -74,16 +74,17 @@ export default function Navbar({ onHome, onCreate }: Props) {
     onCreate()
   }
 
+  // Three destinations, each named for what you do there. (The operator
+  // dashboard lives at /status, linked from the footer.)
   const navLinks = [
-    { label: 'Films', path: '/' },
-    { label: 'Screening Room', path: '/watch' },
-    { label: 'Pledges & Escrow', path: '/pledges' },
-    { label: 'Telemetry', path: '/dashboard' },
+    { label: 'Discover', path: '/' },
+    { label: 'Watch', path: '/watch' },
+    { label: 'My pledges', path: '/pledges' },
   ]
 
   return (
     <>
-      <header className="sticky top-0 z-40 bg-[#0C0E14]/95 backdrop-blur-md border-b border-white/[0.08] px-4 sm:px-6 py-3 flex items-center justify-between">
+      <header className="sticky top-0 z-40 bg-obsidian/95 backdrop-blur-md border-b border-white/[0.08] px-4 sm:px-6 py-3 flex items-center justify-between">
         {/* Left: Brand Logo & Main Nav */}
         <div className="flex items-center gap-6 sm:gap-8">
           <button
@@ -95,16 +96,11 @@ export default function Navbar({ onHome, onCreate }: Props) {
               35
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-cinema font-black tracking-widest text-lg text-silver group-hover:text-amber transition-colors">
-                  CINE<span className="text-amber">FUND</span>
-                </span>
-                <span className="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber/15 text-amber border border-amber/30 hidden sm:inline-block">
-                  35MM
-                </span>
-              </div>
-              <span className="hidden sm:block text-[9px] font-mono tracking-widest text-silver-dim uppercase">
-                Celluloid Crowdfunding & HLS Streaming
+              <span className="block font-cinema font-black tracking-widest text-lg text-silver group-hover:text-amber transition-colors leading-tight">
+                CINE<span className="text-amber">FUND</span>
+              </span>
+              <span className="hidden sm:block text-[10px] tracking-wider text-silver-dim uppercase">
+                Independent film crowdfunding
               </span>
             </div>
           </button>
@@ -139,8 +135,10 @@ export default function Navbar({ onHome, onCreate }: Props) {
             onClick={handleCreateClick}
             className="text-xs font-semibold px-3.5 py-1.5 rounded-lg bg-amber hover:bg-amber-bright text-ink shadow-[0_0_12px_rgba(229,169,60,0.2)] hover:shadow-[0_0_16px_rgba(229,169,60,0.35)] transition-all active:scale-95 flex items-center gap-1.5 cursor-pointer"
           >
-            <span>+</span>
-            <span>Submit Film</span>
+            <span aria-hidden="true">+</span>
+            <span>
+              Start<span className="hidden sm:inline"> a campaign</span>
+            </span>
           </button>
 
           {/* User Section */}
@@ -165,7 +163,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                 </span>
 
                 <span
-                  className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider hidden md:inline-block ${
+                  className={`text-[10px] font-mono font-bold px-1.5 py-0.5 rounded uppercase tracking-wider hidden md:inline-block ${
                     user.role === 'CREATOR'
                       ? 'bg-amber/20 text-amber border border-amber/30'
                       : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
@@ -187,7 +185,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
 
               {/* Account Dropdown Menu */}
               {dropdownOpen && (
-                <div className="absolute right-0 top-full mt-2 w-72 bg-[#12151E] border border-white/[0.12] rounded-2xl shadow-2xl backdrop-blur-xl p-3 z-50 animate-fadeIn space-y-2.5">
+                <div className="absolute right-0 top-full mt-2 w-72 bg-celluloid border border-white/[0.12] rounded-2xl shadow-2xl backdrop-blur-xl p-3 z-50 animate-fadeIn space-y-2.5">
                   {/* User Profile Card */}
                   <div className="p-3 rounded-xl bg-black/40 border border-white/[0.08] space-y-1.5">
                     <div className="flex items-center gap-2.5">
@@ -195,7 +193,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h4 className="font-bold text-silver text-xs truncate">{user.name}</h4>
-                          <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-amber/20 text-amber">
+                          <span className="text-[10px] font-mono px-1 py-px rounded bg-amber/20 text-amber">
                             {user.role}
                           </span>
                         </div>
@@ -218,7 +216,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                         <span>My Pledges</span>
                       </span>
                       {pledgeCount > 0 && (
-                        <span className="px-1.5 py-0.2 rounded-full bg-amber/20 text-amber text-[10px] font-bold">
+                        <span className="px-1.5 py-px rounded-full bg-amber/20 text-amber text-[10px] font-bold">
                           {pledgeCount}
                         </span>
                       )}
@@ -232,7 +230,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-silver hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
                     >
                       <span>🎬</span>
-                      <span>Submit Film</span>
+                      <span>Start a campaign</span>
                     </button>
 
                     <button
@@ -243,7 +241,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-silver hover:text-white hover:bg-white/[0.06] transition-colors cursor-pointer"
                     >
                       <span>📽️</span>
-                      <span>Screening Room</span>
+                      <span>Watch films</span>
                     </button>
 
                     <button
@@ -251,7 +249,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                       className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-silver-dim hover:text-amber hover:bg-white/[0.06] transition-colors cursor-pointer"
                     >
                       <span>⚡</span>
-                      <span>Switch Account / Demo</span>
+                      <span>Switch account</span>
                     </button>
                   </div>
 
@@ -299,7 +297,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <nav id="mobile-nav" aria-label="Main" className="md:hidden bg-[#0C0E14] border-b border-white/10 px-4 py-3 space-y-1 animate-fadeIn">
+        <nav id="mobile-nav" aria-label="Main" className="md:hidden bg-obsidian border-b border-white/10 px-4 py-3 space-y-1 animate-fadeIn">
           {navLinks.map(link => (
             <NavLink
               key={link.path}

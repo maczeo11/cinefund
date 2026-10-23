@@ -35,7 +35,7 @@ export const DEMO_USERS: UserProfile[] = [
     email: 'creator@cinefund.dev',
     role: 'CREATOR',
     avatar: 'A',
-    tag: 'Independent 35mm Director',
+    tag: 'Filmmaker',
   },
   {
     id: '00000000-0000-0000-0000-000000000002',
@@ -43,7 +43,7 @@ export const DEMO_USERS: UserProfile[] = [
     email: 'backer@cinefund.dev',
     role: 'BACKER',
     avatar: 'R',
-    tag: 'Film Patron & Collector',
+    tag: 'Film backer',
   },
 ]
 
@@ -51,7 +51,7 @@ const STORAGE_KEY = 'cinefund_current_user'
 
 const AUTH_EVENT = 'cinefund_auth_change'
 
-const tagFor = (role: UserRole) => (role === 'CREATOR' ? 'Independent 35mm Director' : 'Film Patron & Backer')
+const tagFor = (role: UserRole) => (role === 'CREATOR' ? 'Filmmaker' : 'Film backer')
 
 function parseUser(raw: string | null): UserProfile | null {
   if (!raw || raw === 'null') return null

@@ -3,8 +3,10 @@ import { getCampaigns, getPosterForCampaign, FALLBACK_POSTER_SVG, type Campaign 
 import { rupees, percentOf } from '../format'
 import { Link } from 'react-router-dom'
 import HealthBar from './HealthBar.tsx'
+import { usePageTitle } from '../usePageTitle'
 
 export default function Dashboard() {
+  usePageTitle('System status')
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -26,7 +28,7 @@ export default function Dashboard() {
     }
   }, [])
 
-  if (loading) return <p className="status" role="status">Loading dashboard…</p>
+  if (loading) return <div className="max-w-6xl space-y-4" role="status" aria-busy="true" aria-label="Loading status"><div className="skeleton h-10 w-full" /><div className="skeleton h-8 w-1/3" /><div className="skeleton h-64 w-full rounded-xl" /><span className="sr-only">Loading…</span></div>
   if (loadError) return <p className="status notice" role="alert">{loadError}</p>
 
   return (
@@ -36,8 +38,8 @@ export default function Dashboard() {
       </div>
 
       <div className="flex items-baseline justify-between mb-6">
-        <h1 className="font-serif text-3xl">System Telemetry & Queues</h1>
-        <span className="label">{campaigns.length} campaigns • ledger: debits = credits</span>
+        <h1 className="font-serif text-3xl">System status</h1>
+        <span className="label">{campaigns.length} campaigns</span>
       </div>
 
       <div className="tw-card !p-0 overflow-hidden">
@@ -72,7 +74,7 @@ export default function Dashboard() {
                       <Link to={`/campaigns/${c.id}`} className="font-serif hover:text-accent transition-colors font-medium">
                         {c.title}
                       </Link>
-                      <span className="block text-xs text-white/40">{c.category}</span>
+                      <span className="block text-xs text-silver-faint">{c.category}</span>
                     </div>
                   </div>
                 </td>
@@ -94,7 +96,7 @@ export default function Dashboard() {
           </tbody>
         </table>
       </div>
-      <p className="mt-3 text-xs text-white/30">GET /api/v1/campaigns?creator_id — indexed on creator_id, status. Ledger invariant: sum(debits)=sum(credits) enforced by deferred trigger.</p>
+      <p className="mt-3 text-xs text-silver-faint">Operator view: service health and every campaign on the platform.</p>
     </div>
   )
 }
