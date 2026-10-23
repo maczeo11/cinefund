@@ -33,20 +33,9 @@ func NewRunner(ffmpegPath string) *Runner {
 // segment it is on and close its files cleanly. WaitDelay is the escalation:
 // without it a wedged FFmpeg that ignores SIGTERM blocks shutdown forever.
 func (r *Runner) command(ctx context.Context, args ...string) *exec.Cmd {
-	hasWhitelist := false
-	for _, a := range args {
-		if a == "-protocol_whitelist" {
-			hasWhitelist = true
-			break
-		}
-	}
-	var finalArgs []string
-	if !hasWhitelist {
-		finalArgs = append([]string{"-protocol_whitelist", "file,crypto"}, args...)
-	} else {
-		finalArgs = args
-	}
-	cmd := exec.CommandContext(ctx, r.FFmpegPath, finalArgs...) //nolint:gosec // args are constructed internally (RenditionArgs/PosterArgs), not user shell input
+	// The whitelist is sized to the input: a presigned https URL needs https, a
+	// local file does not. A flat "file,crypto" blocked every real encode.
+	cmd := exec.CommandContext(ctx, r.FFmpegPath, withProtocolWhitelist(args)...) //nolint:gosec // args are constructed internally (RenditionArgs/PosterArgs), not user shell input
 	cmd.Cancel = func() error { return signalTerminate(cmd) }
 	cmd.WaitDelay = r.KillGrace
 	return cmd
