@@ -178,6 +178,29 @@ func TestJWTAuthMiddleware_Cookie(t *testing.T) {
 	}
 }
 
+// The cf_at cookie authenticates playback GETs only; a cross-site form POST
+// carries cookies automatically, so it must not count as authentication.
+func TestJWTAuthMiddleware_CookieIgnoredOnPost(t *testing.T) {
+	token, err := GenerateJWT(uuid.New(), "BACKER", testSecret, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GenerateJWT: %v", err)
+	}
+	r := gin.New()
+	r.Use(JWTAuthMiddleware(testSecret, false))
+	r.POST("/protected", RequireAuth(), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
+	})
+
+	req := httptest.NewRequestWithContext(context.Background(), "POST", "/protected", nil)
+	req.AddCookie(&http.Cookie{Name: "cf_at", Value: token})
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for cookie-only POST, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestRequireAuth_Unauthorized(t *testing.T) {
 	r := gin.New()
 	r.Use(JWTAuthMiddleware(testSecret, false))

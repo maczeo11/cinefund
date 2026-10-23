@@ -41,6 +41,10 @@ func (a redisAdapter) Del(ctx context.Context, keys ...string) (int64, error) {
 
 var version = "dev" // overridden with -ldflags "-X main.version=..."
 
+// maxRequestBodyBytes caps JSON bodies. Video bytes go straight to S3 over
+// presigned URLs, so nothing legitimate sent to the API comes close to this.
+const maxRequestBodyBytes = 1 << 20 // 1MB
+
 func main() {
 	cfg := config.MustLoad()
 	log := logger.New(cfg.Env, "api", version)
@@ -68,6 +72,10 @@ func main() {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Next()
+	})
+	r.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBodyBytes)
 		c.Next()
 	})
 
@@ -189,6 +197,9 @@ func main() {
 		Addr:              net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)),
 		Handler:           r,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	go func() {

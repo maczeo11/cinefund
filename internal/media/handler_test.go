@@ -35,7 +35,6 @@ func TestUploadConstantsAndMIMETypes(t *testing.T) {
 		"video/quicktime",
 		"video/webm",
 		"video/x-matroska",
-		"text/plain", // test
 	}
 	for _, ct := range requiredTypes {
 		if !AllowedVideoMIMETypes[ct] {
@@ -49,6 +48,7 @@ func TestUploadConstantsAndMIMETypes(t *testing.T) {
 		"image/jpeg",
 		"application/octet-stream",
 		"text/html",
+		"text/plain",
 		"application/x-sh",
 	}
 	for _, dt := range disallowedTypes {

@@ -77,6 +77,19 @@ func TestCreatePledgeHandler_BackerIsCallerNotBody(t *testing.T) {
 	}
 }
 
+func TestCreatePledgeHandler_MessageTooLong(t *testing.T) {
+	fq := newFakeQueries()
+	c := liveCampaign(uuid.New(), time.Now().Add(24*time.Hour))
+	fq.seedCampaign(c)
+	svc, _, _ := testService(fq)
+
+	w := postPledge(pledgeRouter(svc, uuid.New()), c.ID,
+		`{"amount":100000,"message":"`+strings.Repeat("a", maxPledgeMessageRunes+1)+`"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an oversized message, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // Naming someone else as backer used to sidestep the creator check.
 func TestCreatePledgeHandler_CreatorCannotPledgeViaBodyBackerID(t *testing.T) {
 	fq := newFakeQueries()

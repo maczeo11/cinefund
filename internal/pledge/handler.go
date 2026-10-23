@@ -2,6 +2,7 @@ package pledge
 
 import (
 	"errors"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -9,6 +10,8 @@ import (
 	"github.com/maczeo11/cinefund/internal/platform/errs"
 	"github.com/maczeo11/cinefund/internal/platform/httpx"
 )
+
+const maxPledgeMessageRunes = 500
 
 type Handler struct {
 	svc *Service
@@ -43,6 +46,10 @@ func (h *Handler) CreatePledge(c *gin.Context) {
 	// TODO: validate currency is INR once we add multi-currency
 	if body.Amount < 1 {
 		httpx.Abort(c, errs.Invalid("INVALID_AMOUNT", "amount must be positive"))
+		return
+	}
+	if utf8.RuneCountInString(body.Message) > maxPledgeMessageRunes {
+		httpx.Abort(c, errs.Invalid("MESSAGE_TOO_LONG", "message must be at most %d characters", maxPledgeMessageRunes))
 		return
 	}
 

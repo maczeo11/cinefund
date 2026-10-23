@@ -202,8 +202,9 @@ func TestCampaign_Create_Success_DefaultsToCallerID(t *testing.T) {
 	})
 
 	body := NewCampaign{
-		Title: "Sci-Fi Epic",
-		Goal:  500000,
+		Title:    "Sci-Fi Epic",
+		Category: "SCIFI",
+		Goal:     500000,
 	}
 	b, _ := json.Marshal(body)
 
@@ -293,7 +294,7 @@ func TestCampaign_AddTier_OwnershipCheck(t *testing.T) {
 
 	tierBody := NewTier{
 		Title:     "Early Bird",
-		MinAmount: 1000,
+		MinAmount: 10000,
 	}
 	b, _ := json.Marshal(tierBody)
 

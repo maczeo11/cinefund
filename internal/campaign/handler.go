@@ -56,6 +56,10 @@ func (h *Handler) Create(c *gin.Context) {
 		httpx.Abort(c, errs.Forbidden("FORBIDDEN", "cannot create campaign for another creator"))
 		return
 	}
+	if err := body.Validate(); err != nil {
+		httpx.Abort(c, err)
+		return
+	}
 	campaign, err := h.store.Create(c.Request.Context(), body)
 	if err != nil {
 		_ = c.Error(err)
@@ -139,6 +143,10 @@ func (h *Handler) AddTier(c *gin.Context) {
 	}
 	if campaign.CreatorID != callerID {
 		httpx.Abort(c, errs.Forbidden("FORBIDDEN", "caller does not own this campaign"))
+		return
+	}
+	if err := body.Validate(); err != nil {
+		httpx.Abort(c, err)
 		return
 	}
 	body.CampaignID = id

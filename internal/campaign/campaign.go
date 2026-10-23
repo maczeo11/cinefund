@@ -3,10 +3,15 @@ package campaign
 import (
 	"context"
 	"errors"
+	"net/url"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/maczeo11/cinefund/internal/platform/errs"
 )
 
 type Campaign struct {
@@ -50,6 +55,71 @@ type NewTier struct {
 	Description   string    `json:"description"`
 	MinAmount     int64     `json:"min_amount"`
 	QuantityLimit *int      `json:"quantity_limit"`
+}
+
+// Categories mirrors the CHECK constraint on campaigns.category.
+var Categories = map[string]bool{
+	"DRAMA": true, "COMEDY": true, "DOCUMENTARY": true, "ANIMATION": true,
+	"HORROR": true, "SCIFI": true, "EXPERIMENTAL": true,
+}
+
+// MinGoalPaise mirrors campaigns.goal_amount >= 100000 (INR 1,000).
+const MinGoalPaise = 100_000
+
+// MinTierPaise mirrors reward_tiers.min_amount >= 10000 (INR 100).
+const MinTierPaise = 10_000
+
+// Validate checks a new campaign against the same rules the schema enforces,
+// so a bad request becomes a 400 with a reason instead of a constraint
+// violation surfacing as a 500. The database stays the source of truth.
+func (n *NewCampaign) Validate() error {
+	n.Title = strings.TrimSpace(n.Title)
+	n.Tagline = strings.TrimSpace(n.Tagline)
+	n.Category = strings.ToUpper(strings.TrimSpace(n.Category))
+	n.CoverKey = strings.TrimSpace(n.CoverKey)
+
+	if l := utf8.RuneCountInString(n.Title); l < 3 || l > 120 {
+		return errs.Invalid("INVALID_TITLE", "title must be 3-120 characters")
+	}
+	if utf8.RuneCountInString(n.Tagline) > 200 {
+		return errs.Invalid("INVALID_TAGLINE", "tagline must be at most 200 characters")
+	}
+	if utf8.RuneCountInString(n.Synopsis) > 10_000 {
+		return errs.Invalid("INVALID_SYNOPSIS", "synopsis must be at most 10000 characters")
+	}
+	if !Categories[n.Category] {
+		return errs.Invalid("INVALID_CATEGORY", "unknown category %q", n.Category)
+	}
+	if n.Goal < MinGoalPaise {
+		return errs.Invalid("INVALID_GOAL", "goal must be at least %d paise", MinGoalPaise)
+	}
+	if n.CoverKey != "" {
+		// cover_key is rendered as an <img src> for every visitor, so only
+		// accept absolute https URLs: no javascript:, data:, or plain http.
+		u, err := url.Parse(n.CoverKey)
+		if err != nil || u.Scheme != "https" || u.Host == "" || len(n.CoverKey) > 2048 {
+			return errs.Invalid("INVALID_COVER", "cover must be an https URL")
+		}
+	}
+	return nil
+}
+
+// Validate mirrors the reward_tiers CHECK constraints.
+func (t *NewTier) Validate() error {
+	t.Title = strings.TrimSpace(t.Title)
+	if l := utf8.RuneCountInString(t.Title); l < 2 || l > 80 {
+		return errs.Invalid("INVALID_TIER_TITLE", "tier title must be 2-80 characters")
+	}
+	if utf8.RuneCountInString(t.Description) > 2000 {
+		return errs.Invalid("INVALID_TIER_DESCRIPTION", "tier description must be at most 2000 characters")
+	}
+	if t.MinAmount < MinTierPaise {
+		return errs.Invalid("INVALID_TIER_AMOUNT", "tier minimum must be at least %d paise", MinTierPaise)
+	}
+	if t.QuantityLimit != nil && *t.QuantityLimit <= 0 {
+		return errs.Invalid("INVALID_TIER_LIMIT", "quantity limit must be positive")
+	}
+	return nil
 }
 
 type Store struct {
