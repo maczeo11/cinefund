@@ -41,6 +41,10 @@ func (a redisAdapter) Del(ctx context.Context, keys ...string) (int64, error) {
 
 var version = "dev" // overridden with -ldflags "-X main.version=..."
 
+// firebaseProjectID is the Firebase project whose ID tokens we accept. It must
+// match projectId in web/src/firebase.ts.
+const firebaseProjectID = "cinefund-82d88"
+
 // maxRequestBodyBytes caps JSON bodies. Video bytes go straight to S3 over
 // presigned URLs, so nothing legitimate sent to the API comes close to this.
 const maxRequestBodyBytes = 1 << 20 // 1MB
@@ -162,7 +166,7 @@ func main() {
 		})
 
 		// Firebase Google Auth exchange & PostgreSQL user sync
-		api.POST("/auth/firebase", HandleFirebaseAuth(pg, cfg.JWT.AccessSecret, "cinefund-82d88"))
+		api.POST("/auth/firebase", HandleFirebaseAuth(pg, cfg.JWT.AccessSecret, NewFirebaseVerifier(firebaseProjectID)))
 		if cfg.Auth.DemoLogin {
 			log.Info("demo login enabled")
 			api.POST("/auth/demo", HandleDemoAuth(pgDemoUsers{pool: pg}, cfg.JWT.AccessSecret))

@@ -8,9 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -221,63 +219,6 @@ func RequireAuth() gin.HandlerFunc {
 	}
 }
 
-// FirebaseTokenInfo holds claims returned by Google's tokeninfo endpoint.
-type FirebaseTokenInfo struct {
-	Issuer        string `json:"iss"`
-	Audience      string `json:"aud"`
-	Subject       string `json:"sub"`
-	Email         string `json:"email"`
-	EmailVerified string `json:"email_verified"`
-	Name          string `json:"name"`
-	Picture       string `json:"picture"`
-	ExpiresIn     string `json:"expires_in"`
-}
-
-// VerifyFirebaseIDToken calls Google's public tokeninfo endpoint to verify a Firebase ID token.
-func VerifyFirebaseIDToken(ctx context.Context, idToken, expectedProjectID string) (*FirebaseTokenInfo, error) {
-	cleanToken := strings.TrimSpace(idToken)
-	if cleanToken == "" {
-		return nil, errors.New("empty id_token")
-	}
-
-	reqURL := "https://oauth2.googleapis.com/tokeninfo?id_token=" + url.QueryEscape(cleanToken)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create tokeninfo request: %w", err)
-	}
-
-	client := &http.Client{Timeout: 6 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("tokeninfo request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		// Drain but don't echo Google's body: this error reaches the client.
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-		return nil, fmt.Errorf("invalid token (status %d)", resp.StatusCode)
-	}
-
-	var info FirebaseTokenInfo
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info); err != nil {
-		return nil, fmt.Errorf("decode tokeninfo: %w", err)
-	}
-
-	if expectedProjectID != "" {
-		// Firebase ID tokens carry aud=<project> and iss=securetoken/<project>;
-		// checking both pins the token to this project's Firebase Auth.
-		if info.Audience != expectedProjectID {
-			return nil, errors.New("token audience mismatch")
-		}
-		if info.Issuer != "https://securetoken.google.com/"+expectedProjectID {
-			return nil, errors.New("token issuer mismatch")
-		}
-	}
-
-	return &info, nil
-}
-
 // FirebaseAuthRequest defines the payload expected by POST /api/v1/auth/firebase.
 type FirebaseAuthRequest struct {
 	IDToken string `json:"id_token"`
@@ -285,7 +226,7 @@ type FirebaseAuthRequest struct {
 }
 
 // HandleFirebaseAuth verifies the Firebase ID token, upserts the user in PostgreSQL, and returns a session JWT.
-func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.HandlerFunc {
+func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret string, verifier idTokenVerifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body FirebaseAuthRequest
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -293,9 +234,9 @@ func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.Ha
 			return
 		}
 
-		info, err := VerifyFirebaseIDToken(c.Request.Context(), body.IDToken, projectID)
+		info, err := verifier.Verify(c.Request.Context(), body.IDToken)
 		if err != nil {
-			httpx.Abort(c, errs.Unauthorized("INVALID_TOKEN", "failed to verify Firebase Google token: %v", err))
+			httpx.Abort(c, errs.Unauthorized("INVALID_TOKEN", "invalid Firebase ID token: %v", err))
 			return
 		}
 
