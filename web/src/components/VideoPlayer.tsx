@@ -10,9 +10,9 @@ function isSameOrigin(url: string): boolean {
   }
 }
 
-type Props = { src: string; poster?: string; title?: string; withAuth?: boolean }
+type Props = { src: string; poster?: string; title?: string; withAuth?: boolean; label?: string }
 
-export default function VideoPlayer({ src, poster, title, withAuth = false }: Props) {
+export default function VideoPlayer({ src, poster, title, withAuth = false, label = 'Reel' }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [playing, setPlaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -107,13 +107,13 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
           {/* Top Reel Badge */}
           <div className="flex items-center justify-between pointer-events-none">
             <span className="px-2.5 py-1 rounded bg-black/75 backdrop-blur-md border border-amber/30 text-[10px] font-mono uppercase tracking-widest text-amber font-bold shadow">
-              35mm Workprint Reel
+              {label}
             </span>
           </div>
 
           {/* Centered Glowing Play Icon */}
           <div className="self-center my-auto pointer-events-none">
-            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber text-night flex items-center justify-center shadow-[0_0_30px_rgba(229,169,60,0.5)] group-hover:scale-110 group-hover:bg-amber-bright transition-transform duration-300">
+            <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber text-ink flex items-center justify-center shadow-[0_0_30px_rgba(229,169,60,0.5)] group-hover:scale-110 group-hover:bg-amber-bright transition-transform duration-300">
               <svg className="w-6 h-6 sm:w-7 sm:h-7 translate-x-0.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 5v14l11-7z" />
               </svg>

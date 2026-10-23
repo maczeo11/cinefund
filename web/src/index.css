@@ -2,23 +2,81 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 35mm Arthouse Cinema Palette & Custom Atmosphere */
+/* 35mm Arthouse Cinema Palette — the single source of truth for colour.
+ *
+ * Channels are space-separated RGB so Tailwind can apply alpha (bg-amber/15)
+ * and CSS can compose them (rgb(var(--c-amber) / .07)).
+ *
+ * Text contrast, measured (WCAG 2.x) on obsidian / celluloid / raised:
+ *   silver 17.5 / 16.3 / 15.0   dim 8.5 / 7.9 / 7.3   faint 5.3 / 4.9 / 4.6
+ *   amber  9.3  / 8.7  / 8.0    crimson 5.3 / 4.9 / 4.6   teal 10.4 / 9.7 / 9.0
+ * Anything meant to be read should use silver, dim or faint — never lower.
+ */
 @layer base {
   :root {
-    --ink: #0B0D13;
-    --ink-raised: #121622;
-    --paper: #F1F3F7;
-    --paper-dim: #8B95A5;
-    --paper-faint: #4B5565;
-    --rule: rgba(255, 255, 255, 0.08);
-    --rule-soft: rgba(255, 255, 255, 0.04);
-    --accent: #E5A93C;
-    --amber: #E5A93C;
-    --crimson: #E11D48;
+    --c-obsidian: 11 13 19;      /* page */
+    --c-celluloid: 18 22 34;     /* cards, panels */
+    --c-raised: 24 29 44;        /* hover / elevated */
+    --c-silver: 241 243 247;     /* primary text */
+    --c-dim: 163 172 187;        /* secondary text */
+    --c-faint: 124 134 153;      /* tertiary text, metadata */
+    --c-amber: 229 169 60;       /* highlights, primary action */
+    --c-amber-bright: 245 190 88;
+    --c-crimson: 244 63 94;      /* live, errors, destructive */
+    --c-teal: 45 212 191;        /* success, funded, backer */
+
+    /* names App.css was written against */
+    --ink: rgb(var(--c-obsidian));
+    --ink-raised: rgb(var(--c-celluloid));
+    --paper: rgb(var(--c-silver));
+    --paper-dim: rgb(var(--c-dim));
+    --paper-faint: rgb(var(--c-faint));
+    --accent: rgb(var(--c-amber));
+    --amber: rgb(var(--c-amber));
+    --crimson: rgb(var(--c-crimson));
+    --teal: rgb(var(--c-teal));
+    --rule: rgb(255 255 255 / 0.08);
+    --rule-soft: rgb(255 255 255 / 0.04);
+    /* form-field edges are UI boundaries: WCAG wants 3:1, a hairline rule won't do */
+    --field-rule: rgb(var(--c-faint) / 0.75);
 
     --serif: 'Cinzel', Georgia, 'Times New Roman', serif;
     --display: 'Space Grotesk', -apple-system, sans-serif;
     --sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+
+  /* Keyboard users get a visible ring everywhere; mouse users don't see it. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-amber));
+    outline-offset: 2px;
+  }
+
+  /* Film grain: a static, very faint noise layer over the whole app. It sits
+   * above content but never takes pointer events, and costs one composited
+   * layer (no blend modes, no animation). */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    pointer-events: none;
+    opacity: 0.045;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .6 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  @media print {
+    body::after { display: none; }
+  }
+
+  /* Honour the OS "reduce motion" setting: pulses, pings, spins and hover
+   * zooms collapse to a single instant frame. */
+  @media (prefers-reduced-motion: reduce) {
+    *, ::before, ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -34,5 +92,20 @@
   }
   .cinema-live {
     @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-crimson/20 border border-crimson/40 text-crimson text-[11px] font-semibold tracking-wider;
+  }
+
+  /* The colour grade: warm highlights falling from the top of the frame, cool
+   * teal in the shadows at the bottom corner — split-toning in two gradients. */
+  .cinema-grade {
+    background-color: rgb(var(--c-obsidian));
+    background-image:
+      radial-gradient(1100px 520px at 50% -6%, rgb(var(--c-amber) / 0.075), transparent 62%),
+      radial-gradient(800px 640px at 108% 100%, rgb(var(--c-teal) / 0.05), transparent 60%);
+    background-repeat: no-repeat;
+  }
+
+  /* Placeholder block while content loads (see CampaignList). */
+  .skeleton {
+    @apply rounded-lg bg-white/[0.06] animate-pulse;
   }
 }

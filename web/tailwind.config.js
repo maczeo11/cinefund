@@ -1,4 +1,10 @@
 /** @type {import('tailwindcss').Config} */
+
+// Every colour reads a channel variable defined once in src/index.css, so
+// Tailwind utilities (bg-amber/15), App.css (var(--accent)) and the film-grade
+// backgrounds can never drift apart. Change the palette there.
+const c = name => `rgb(var(--c-${name}) / <alpha-value>)`
+
 export default {
   content: [
     "./index.html",
@@ -7,27 +13,36 @@ export default {
   theme: {
     extend: {
       colors: {
-        obsidian: "#0B0D13",
-        celluloid: "#121622",
-        "celluloid-hover": "#181D2C",
-        "celluloid-border": "rgba(255, 255, 255, 0.08)",
+        // surfaces, darkest to lightest
+        obsidian: c('obsidian'),
+        celluloid: c('celluloid'),
+        raised: c('raised'),
         amber: {
-          DEFAULT: "#E5A93C",
-          bright: "#F5BE58",
-          glow: "rgba(229, 169, 60, 0.25)",
+          DEFAULT: c('amber'),
+          bright: c('amber-bright'),
         },
         crimson: {
-          DEFAULT: "#E11D48",
-          glow: "rgba(225, 29, 72, 0.25)",
+          DEFAULT: c('crimson'),
         },
+        // text: paper > dim > faint, all >= 4.5:1 on every surface
         silver: {
-          DEFAULT: "#F1F3F7",
-          dim: "#8B95A5",
-          faint: "#4B5565",
+          DEFAULT: c('silver'),
+          dim: c('dim'),
+          faint: c('faint'),
         },
-        ink: "#0B0D13",
-        paper: "#F1F3F7",
-        accent: "#E5A93C",
+        ink: c('obsidian'),
+        paper: c('silver'),
+        accent: c('amber'),
+        // The success/"funded" colour. The components say `emerald-*`; this
+        // remaps that scale to teal so shadows lean cool against the amber
+        // highlights (the teal-and-orange grade) without touching every file.
+        emerald: {
+          300: '#99F6E4',
+          400: c('teal'),
+          500: '#14B8A6',
+          800: '#115E59',
+          950: '#042F2E',
+        },
       },
       fontFamily: {
         cinema: ["Cinzel", "serif"],
@@ -39,4 +54,3 @@ export default {
   },
   plugins: [],
 }
-

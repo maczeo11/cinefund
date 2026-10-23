@@ -4,6 +4,7 @@ import { toPaise } from '../format'
 import AuthModal from './AuthModal.tsx'
 import Avatar from './Avatar.tsx'
 import { signInAsDemo, useActiveUser } from '../auth'
+import { usePageTitle } from '../usePageTitle'
 
 const CATEGORIES = ['DRAMA', 'COMEDY', 'DOCUMENTARY', 'ANIMATION', 'HORROR', 'SCIFI', 'EXPERIMENTAL'] as const
 const MAX_VIDEO_BYTES = 500 * 1024 * 1024
@@ -11,6 +12,7 @@ const MAX_VIDEO_BYTES = 500 * 1024 * 1024
 type Props = { onDone: () => void }
 
 export default function CampaignForm({ onDone }: Props) {
+  usePageTitle('Start a campaign')
   const [film, setFilm] = useState({ title: '', tagline: '', synopsis: '', category: 'DRAMA', goal: '' })
   const [reward, setReward] = useState({ title: '', min: '', description: '' })
   const [posterUrl, setPosterUrl] = useState<string>(POSTER_PRESETS[0].url)
@@ -79,7 +81,7 @@ export default function CampaignForm({ onDone }: Props) {
     const finalPoster = posterUrl.trim() || getPosterForCampaign({ category: film.category })
 
     try {
-      setUploadStage('Setting up campaign details...')
+      setUploadStage('Creating your campaign…')
       const campaign = await createCampaign({
         creator_id: creatorId,
         creator_name: creatorName,
@@ -102,11 +104,11 @@ export default function CampaignForm({ onDone }: Props) {
 
       // If a video file was selected, upload directly to S3 via Presigned URL
       if (videoFile) {
-        setUploadStage('Requesting S3 Presigned URL & uploading video...')
+        setUploadStage('Uploading your reel…')
         setUploadProgress(0)
         await uploadVideoFileToS3(videoFile, creatorId, campaign.id, (pct) => {
           setUploadProgress(pct)
-          setUploadStage(`Uploading ${videoFile.name} to S3: ${pct}%`)
+          setUploadStage(`Uploading ${videoFile.name}: ${pct}%`)
         })
         setUploadStage('Upload verified. Preparing release...')
       }
@@ -134,10 +136,10 @@ export default function CampaignForm({ onDone }: Props) {
         </div>
         <div className="space-y-2">
           <h2 className="font-cinema text-2xl font-bold text-silver">
-            Launch Your Film Campaign
+            Start a campaign
           </h2>
           <p className="text-xs text-silver-dim leading-relaxed">
-            Sign in or register to publish your project, upload master workprints, and receive backer funding.
+            Sign in or create an account to start a campaign, share a reel, and receive backer funding.
           </p>
         </div>
 
@@ -178,7 +180,7 @@ export default function CampaignForm({ onDone }: Props) {
   return (
     <div className="max-w-2xl mx-auto py-4 animate-fadeIn">
       {/* Session Identity Ribbon */}
-      <div className="p-3 rounded-xl bg-[#12151E] border border-white/10 mb-6 flex items-center justify-between shadow-sm">
+      <div className="p-3 rounded-xl bg-celluloid border border-white/10 mb-6 flex items-center justify-between shadow-sm">
         <div className="flex items-center gap-2.5 min-w-0">
           <Avatar user={activeUser} className="h-8 w-8 rounded-lg text-xs" />
           <div className="min-w-0">
@@ -197,14 +199,14 @@ export default function CampaignForm({ onDone }: Props) {
       </div>
 
       <div className="mb-6 space-y-1">
-        <h1 className="font-cinema text-3xl font-extrabold text-silver">Launch a Film Campaign</h1>
+        <h1 className="font-cinema text-3xl font-extrabold text-silver">Start a campaign</h1>
         <p className="text-xs text-silver-dim">
-          Set up your story, funding goals, and workprint reel. Backer funds are safeguarded in double-entry escrow.
+          Tell people about your film, set a goal, and add a reward. You can add a reel (a trailer or work-in-progress cut) so backers can watch it on your campaign page.
         </p>
       </div>
 
       <form onSubmit={submit} className="space-y-6">
-        <div className="p-6 rounded-2xl bg-[#12151E] border border-white/10 space-y-5 shadow-lg">
+        <div className="p-6 rounded-2xl bg-celluloid border border-white/10 space-y-5 shadow-lg">
           <div>
             <label className="block text-xs font-medium text-silver mb-1.5" htmlFor="title">
               Film Title
@@ -261,7 +263,7 @@ export default function CampaignForm({ onDone }: Props) {
                 className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver focus:outline-none focus:border-amber transition-all"
               >
                 {CATEGORIES.map(c => (
-                  <option key={c} value={c} className="bg-[#12151E] text-silver">
+                  <option key={c} value={c} className="bg-celluloid text-silver">
                     {c}
                   </option>
                 ))}
@@ -336,7 +338,7 @@ export default function CampaignForm({ onDone }: Props) {
                           }}
                           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         />
-                        <span className="absolute bottom-1 left-1 px-1.5 py-0.2 rounded bg-black/80 backdrop-blur-md text-[8px] font-mono text-amber font-semibold uppercase">
+                        <span className="absolute bottom-1 left-1 px-1.5 py-px rounded bg-black/80 backdrop-blur-md text-[10px] font-mono text-amber font-semibold uppercase">
                           {preset.genre}
                         </span>
                       </div>
@@ -365,9 +367,6 @@ export default function CampaignForm({ onDone }: Props) {
                   className="w-full h-full object-cover"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent pointer-events-none" />
-                <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/75 backdrop-blur-md border border-white/20 text-[9px] font-mono text-silver">
-                  35MM
-                </div>
                 <div className="absolute bottom-2 left-2 right-2">
                   <span className="font-cinema font-bold text-sm text-silver block truncate">
                     {film.title || 'Untitled Film'}
@@ -383,7 +382,7 @@ export default function CampaignForm({ onDone }: Props) {
           {/* Master Video Reel Upload */}
           <div className="border-t border-white/[0.08] pt-4">
             <label className="block text-xs font-medium text-silver mb-1" htmlFor="video">
-              Workprint Reel or Trailer (.mp4) — Optional
+              Reel or trailer (optional)
             </label>
             <input
               id="video"
@@ -398,13 +397,13 @@ export default function CampaignForm({ onDone }: Props) {
               </p>
             )}
             <p className="text-[11px] text-silver-dim mt-1">
-              Uploaded securely to private storage and encoded into multi-bitrate HLS streams.
+              Stored privately and encoded for smooth streaming. Backers watch it on your campaign page.
             </p>
           </div>
         </div>
 
         {/* First Reward Tier */}
-        <div className="p-6 rounded-2xl bg-[#12151E] border border-white/10 space-y-4 shadow-lg">
+        <div className="p-6 rounded-2xl bg-celluloid border border-white/10 space-y-4 shadow-lg">
           <h3 className="font-semibold text-silver text-sm">First Backer Reward Tier — Optional</h3>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
@@ -416,7 +415,7 @@ export default function CampaignForm({ onDone }: Props) {
                 name="title"
                 value={reward.title}
                 onChange={set(reward, setReward)}
-                placeholder="e.g. Workprint Access & Digital Credit"
+                placeholder="e.g. Digital credit + early access"
                 className="w-full px-3.5 py-2.5 rounded-xl bg-black/40 border border-white/10 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber focus:ring-1 focus:ring-amber transition-all"
               />
             </div>

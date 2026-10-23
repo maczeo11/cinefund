@@ -69,7 +69,9 @@ export type CampaignVideo = {
 }
 
 export const getCampaignVideo = (campaignId: string): Promise<CampaignVideo> =>
-  request<CampaignVideo>(`/campaigns/${campaignId}/video`)
+  isLocalId(campaignId)
+    ? Promise.reject(new BackendUnavailableError())
+    : request<CampaignVideo>(`/campaigns/${campaignId}/video`)
 
 // playbackMasterUrl points the HLS player at the auth-gated master playlist.
 // Playlists require auth; the segments they reference are short-lived
@@ -200,6 +202,9 @@ export function subscribeDemoMode(onChange: () => void): () => void {
   return () => window.removeEventListener(DEMO_MODE_EVENT, onChange)
 }
 
+// Demo deadlines are relative to now so the sample films never expire on a visitor.
+const inDays = (n: number) => new Date(Date.now() + n * 86_400_000).toISOString()
+
 const DEMO_CAMPAIGNS: Campaign[] = [
   {
     id: '11111111-1111-1111-1111-111111111111',
@@ -213,7 +218,7 @@ const DEMO_CAMPAIGNS: Campaign[] = [
     goal_amount: 50000000,
     raised_amount: 37000000,
     backer_count: 42,
-    deadline: '2026-10-18T00:00:00Z',
+    deadline: inDays(9),
     created_at: new Date().toISOString(),
     poster_url: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=80',
   },
@@ -229,7 +234,7 @@ const DEMO_CAMPAIGNS: Campaign[] = [
     goal_amount: 80000000,
     raised_amount: 64000000,
     backer_count: 98,
-    deadline: '2026-10-25T00:00:00Z',
+    deadline: inDays(19),
     created_at: new Date().toISOString(),
     poster_url: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80',
   },
@@ -245,7 +250,7 @@ const DEMO_CAMPAIGNS: Campaign[] = [
     goal_amount: 30000000,
     raised_amount: 21000000,
     backer_count: 31,
-    deadline: '2026-11-04T00:00:00Z',
+    deadline: inDays(33),
     created_at: new Date().toISOString(),
     poster_url: 'https://images.unsplash.com/photo-1561361513-2d000a50f0dc?auto=format&fit=crop&w=1200&q=80',
   },
@@ -261,7 +266,7 @@ const DEMO_CAMPAIGNS: Campaign[] = [
     goal_amount: 45000000,
     raised_amount: 28500000,
     backer_count: 54,
-    deadline: '2026-10-12T00:00:00Z',
+    deadline: inDays(5),
     created_at: new Date().toISOString(),
     poster_url: 'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?auto=format&fit=crop&w=1200&q=80',
   },

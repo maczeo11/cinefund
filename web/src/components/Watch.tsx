@@ -1,147 +1,153 @@
-import { useState } from 'react'
-import VideoPlayer from './VideoPlayer.tsx'
-import { FALLBACK_POSTER_SVG } from '../api'
+import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
+import { FALLBACK_POSTER_SVG, getCampaignVideo, getCampaigns, getPosterForCampaign, isBackendUnavailable, type Campaign } from '../api'
+import { campaignPhase, PHASE_LABEL } from '../format'
+import { useActiveUser } from '../auth'
+import { usePageTitle } from '../usePageTitle'
 
-const REELS = [
-  {
-    id: 'reel-1',
-    title: 'The Last Frame',
-    subtitle: '35mm Master (Sci-Fi Cut)',
-    src: 'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8',
-    aspect: '2.39:1 Anamorphic',
-    fps: '24.000 fps',
-    ladder: '1080p / 720p / 480p ABR',
-    poster: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?auto=format&fit=crop&w=1200&q=80',
-    category: '35MM NOIR',
-  },
-  {
-    id: 'reel-2',
-    title: 'Solaris Drift',
-    subtitle: 'Outer Orbit Carrier Test',
-    src: 'https://bitdash-a.akamaihd.net/content/sintel/hls/playlist.m3u8',
-    aspect: '1.85:1 Flat',
-    fps: '24.000 fps',
-    ladder: '1080p / 720p ABR',
-    poster: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&w=1200&q=80',
-    category: '70MM SCIFI',
-  },
-]
+type ReelState = 'ready' | 'sample' | 'none'
+type Entry = { campaign: Campaign; reel: ReelState }
+
+// Each reel check is one small request; cap how many films we probe at once.
+const MAX_FILMS = 12
+
+const REEL_BADGE: Record<ReelState, { text: string; className: string }> = {
+  ready: { text: 'Reel available', className: 'text-emerald-400 border-emerald-400/30 bg-emerald-400/10' },
+  sample: { text: 'Sample reel', className: 'text-amber border-amber/30 bg-amber/10' },
+  none: { text: 'No reel yet', className: 'text-silver-dim border-white/15 bg-white/[0.04]' },
+}
 
 export default function Watch() {
-  const [activeReel, setActiveReel] = useState(REELS[0])
+  usePageTitle('Watch')
+  const user = useActiveUser()
+  const [entries, setEntries] = useState<Entry[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getCampaigns()
+      .then(async campaigns => {
+        const films = campaigns.filter(c => campaignPhase(c) !== 'draft').slice(0, MAX_FILMS)
+        const results = await Promise.allSettled(films.map(c => getCampaignVideo(c.id)))
+        const list: Entry[] = films.map((campaign, i) => {
+          const r = results[i]
+          if (r.status === 'fulfilled') return { campaign, reel: r.value.status === 'READY' ? 'ready' : 'none' }
+          // Server unreachable: the film page offers a labelled sample clip.
+          return { campaign, reel: isBackendUnavailable(r.reason) ? 'sample' : 'none' }
+        })
+        // Films you can actually watch first.
+        const rank: Record<ReelState, number> = { ready: 0, sample: 1, none: 2 }
+        list.sort((a, b) => rank[a.reel] - rank[b.reel])
+        if (!cancelled) setEntries(list)
+      })
+      .catch(err => {
+        if (!cancelled) setError((err as Error).message || 'Could not load films.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const watchable = entries?.filter(e => e.reel !== 'none').length ?? 0
 
   return (
-    <div className="max-w-5xl py-4 animate-fadeIn">
-      {/* Screening Room Header */}
-      <div className="mb-6 pb-6 border-b border-white/[0.08] flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-amber/10 border border-amber/25 text-amber text-[11px] font-mono mb-2">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber animate-pulse" />
-            <span>DIRECTOR WORKPRINT SCREENING ROOM</span>
-          </div>
-          <h1 className="font-cinema text-3xl sm:text-4xl font-extrabold text-silver">
-            The Cinema Hall
-          </h1>
-          <p className="text-xs sm:text-sm text-silver-dim mt-1.5 max-w-2xl font-sans">
-            Stream master cuts transcoded via CineFund's Kafka-driven FFmpeg worker pool with atomic HLS master playlists.
-          </p>
-        </div>
-      </div>
+    <div className="max-w-6xl py-4 animate-fadeIn">
+      <header className="mb-8 pb-6 border-b border-white/[0.08]">
+        <h1 className="font-cinema text-3xl sm:text-4xl font-extrabold text-silver">Watch</h1>
+        <p className="mt-2 max-w-2xl text-sm sm:text-base text-silver-dim leading-relaxed">
+          Stream reels shared by filmmakers. Pick a film below and press play on its page.
+          {!user && ' You’ll be asked to sign in (it’s free) before the reel starts.'}
+        </p>
+      </header>
 
-      {/* Reel Selection Cards with 16:9 Posters */}
-      <div className="mb-6">
-        <span className="text-[11px] font-mono uppercase tracking-wider text-silver-dim block mb-3">
-          Select Master Reel to Project:
-        </span>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {REELS.map(r => {
-            const isActive = activeReel.id === r.id
-            return (
-              <div
-                key={r.id}
-                onClick={() => setActiveReel(r)}
-                className={`p-3 rounded-2xl border transition-all cursor-pointer flex gap-3.5 items-center ${
-                  isActive
-                    ? 'border-amber bg-amber/15 shadow-[0_0_20px_rgba(229,169,60,0.25)] ring-1 ring-amber/50'
-                    : 'border-white/10 bg-celluloid hover:border-white/20 hover:bg-white/[0.03]'
-                }`}
-              >
-                <div className="relative aspect-video w-32 rounded-xl overflow-hidden shrink-0 border border-white/10 bg-black">
-                  <img
-                    src={r.poster}
-                    alt={r.title}
-                    onError={(e) => {
-                      e.currentTarget.onerror = null
-                      e.currentTarget.src = FALLBACK_POSTER_SVG
-                    }}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent pointer-events-none" />
-                  <span className="absolute bottom-1 left-1 px-1.5 py-0.2 rounded bg-black/80 backdrop-blur-md text-[8px] font-mono text-amber font-bold uppercase">
-                    {r.category}
-                  </span>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-cinema font-bold text-sm text-silver truncate">
-                      {r.title}
-                    </h3>
-                    {isActive && (
-                      <span className="px-1.5 py-0.2 rounded bg-amber text-ink text-[9px] font-mono font-bold shrink-0">
-                        NOW PLAYING
+      {error && (
+        <p role="alert" className="notice notice-error">
+          {error}
+        </p>
+      )}
+
+      {!entries && !error && (
+        <div role="status" aria-busy="true" aria-label="Loading films" className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2, 3, 4, 5].map(i => (
+            <div key={i} className="rounded-2xl border border-white/[0.08] bg-celluloid p-3">
+              <div className="skeleton aspect-video w-full rounded-xl" />
+              <div className="skeleton mt-3 h-5 w-2/3" />
+              <div className="skeleton mt-2 h-3.5 w-1/3" />
+            </div>
+          ))}
+          <span className="sr-only">Loading films…</span>
+        </div>
+      )}
+
+      {entries && entries.length === 0 && (
+        <div className="rounded-2xl border border-white/10 bg-celluloid p-12 text-center">
+          <p className="font-cinema text-lg text-silver">Nothing to watch yet</p>
+          <p className="mt-1 text-sm text-silver-dim">Films appear here as soon as filmmakers publish campaigns.</p>
+          <Link to="/" className="inline-block mt-4 px-4 py-2 rounded-lg bg-amber text-ink text-xs font-semibold">
+            Browse films
+          </Link>
+        </div>
+      )}
+
+      {entries && entries.length > 0 && (
+        <>
+          {watchable === 0 && (
+            <p className="mb-5 text-sm text-silver-dim">
+              No filmmaker has shared a reel yet. You can still back these films and check back for reels later.
+            </p>
+          )}
+          <ul className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {entries.map(({ campaign: c, reel }) => {
+              const badge = REEL_BADGE[reel]
+              return (
+                <li key={c.id}>
+                  <Link
+                    to={reel === 'none' ? `/campaigns/${c.id}` : `/campaigns/${c.id}#watch`}
+                    className="group block rounded-2xl border border-white/[0.08] bg-celluloid p-3 transition-all hover:border-amber/40 hover:shadow-[0_4px_30px_rgb(var(--c-amber)/0.12)]"
+                  >
+                    <div className="relative aspect-video overflow-hidden rounded-xl bg-black">
+                      <img
+                        src={getPosterForCampaign(c)}
+                        alt=""
+                        loading="lazy"
+                        onError={e => {
+                          e.currentTarget.onerror = null
+                          e.currentTarget.src = FALLBACK_POSTER_SVG
+                        }}
+                        className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent" />
+                      {reel !== 'none' && (
+                        <span
+                          className="absolute inset-0 m-auto h-12 w-12 rounded-full bg-amber text-ink flex items-center justify-center shadow-[0_0_24px_rgb(var(--c-amber)/0.5)]"
+                          aria-hidden="true"
+                        >
+                          <svg className="h-5 w-5 translate-x-0.5 fill-current" viewBox="0 0 24 24">
+                            <path d="M8 5v14l11-7z" />
+                          </svg>
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-3 flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h2 className="font-cinema text-base font-bold text-silver truncate group-hover:text-amber transition-colors">
+                          {c.title}
+                        </h2>
+                        <p className="mt-0.5 text-xs text-silver-dim capitalize">
+                          {(c.category || 'Film').toLowerCase()} · {PHASE_LABEL[campaignPhase(c)].toLowerCase()}
+                        </p>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${badge.className}`}>
+                        {badge.text}
                       </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-silver-dim font-sans truncate mt-0.5">{r.subtitle}</p>
-                  <p className="text-[10px] font-mono text-silver-faint mt-1">{r.aspect} • {r.fps}</p>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Main Cinema Theater Frame */}
-      <div className="bg-black/90 p-2 sm:p-4 rounded-2xl border border-white/10 shadow-[0_0_40px_rgba(0,0,0,0.8)]">
-        <VideoPlayer src={activeReel.src} title={activeReel.title} />
-
-        {/* Active Reel Timecode & Metadata */}
-        <div className="mt-3 px-2 flex flex-wrap items-center justify-between gap-2 text-xs font-mono text-silver-dim">
-          <div className="flex items-center gap-3">
-            <span className="text-silver font-semibold">{activeReel.title}</span>
-            <span className="text-silver-faint">·</span>
-            <span className="text-amber">{activeReel.aspect}</span>
-          </div>
-          <div className="flex items-center gap-3 text-[11px]">
-            <span className="cinema-tag">{activeReel.fps}</span>
-            <span className="cinema-tag">{activeReel.ladder}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Technical Architecture Cards */}
-      <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
-        <div className="p-4 bg-celluloid border border-white/10 rounded-xl">
-          <span className="text-amber font-semibold">1. FFprobe Analysis</span>
-          <p className="text-silver-dim mt-1.5 leading-relaxed font-sans text-xs">
-            Probes duration, codec, and resolution. Strict rotation handling and validation before queueing.
-          </p>
-        </div>
-
-        <div className="p-4 bg-celluloid border border-white/10 rounded-xl">
-          <span className="text-amber font-semibold">2. ABR Strict GOP 48</span>
-          <p className="text-silver-dim mt-1.5 leading-relaxed font-sans text-xs">
-            24fps with 48-frame keyframe intervals, scene detection off. Seamless quality switching without glitching.
-          </p>
-        </div>
-
-        <div className="p-4 bg-celluloid border border-white/10 rounded-xl">
-          <span className="text-amber font-semibold">3. Crash-Safe Fencing</span>
-          <p className="text-silver-dim mt-1.5 leading-relaxed font-sans text-xs">
-            Workers claim jobs with <code className="text-amber">SKIP LOCKED</code> leases and heartbeat. Fencing tokens prevent stale worker overwrites.
-          </p>
-        </div>
-      </div>
+                    </div>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </>
+      )}
     </div>
   )
 }
