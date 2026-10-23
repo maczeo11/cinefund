@@ -68,12 +68,17 @@ func RenditionArgs(input string, r Rung, outDir string) []string {
 		"-maxrate", strconv.Itoa(r.MaxRate),
 		"-bufsize", strconv.Itoa(r.BufSize),
 
-		// scale=-2 computes width from the target height, rounded to an EVEN
-		// number. -1 can produce an odd width, which H.264 with yuv420p rejects.
+		// scale=-2 computes width from the target height, but once
+		// force_original_aspect_ratio is set FFmpeg (8.x at least) no longer
+		// rounds that width to an even number: a 16:9 source at 480p came out
+		// 853px wide and libx264 refused to open ("width not divisible by 2").
+		// force_divisible_by=2 is the option that guarantees even dimensions in
+		// that combination. It rounds to the NEAREST even number (853.33 -> 854),
+		// which Rung.Width mirrors for the RESOLUTION in the master playlist.
 		// force_original_aspect_ratio=decrease never distorts non-16:9 source.
 		// format=yuv420p converts 10-bit / 4:2:2 sources (ProRes) to 8-bit 4:2:0;
 		// omit it and the file plays in VLC but shows a black frame in Chrome.
-		"-vf", fmt.Sprintf("scale=-2:%d:force_original_aspect_ratio=decrease,format=yuv420p", r.Height),
+		"-vf", fmt.Sprintf("scale=-2:%d:force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p", r.Height),
 
 		"-g", strconv.Itoa(GOPFrames),
 		"-keyint_min", strconv.Itoa(GOPFrames),

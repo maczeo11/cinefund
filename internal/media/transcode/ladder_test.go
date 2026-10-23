@@ -94,6 +94,40 @@ func TestRenditionArgs_GOPIdenticalAcrossRungs(t *testing.T) {
 	}
 }
 
+// Widths here were measured from real ffmpeg 8 output, not computed by hand: the
+// master playlist advertises Rung.Width, so it must equal the encoded width.
+func TestRungWidth_MatchesWhatFFmpegEncodes(t *testing.T) {
+	byHeight := func(h int) Rung {
+		for _, r := range fullLadder {
+			if r.Height == h {
+				return r
+			}
+		}
+		t.Fatalf("no %dp rung", h)
+		return Rung{}
+	}
+	cases := []struct {
+		rung, srcW, srcH, want int
+	}{
+		{480, 1280, 720, 854},   // 853.33 -> nearest even (the width that crashed the encode)
+		{480, 1920, 1080, 854},  // same aspect ratio, bigger source
+		{240, 1280, 720, 426},   // 426.67 -> 426
+		{720, 1280, 720, 1280},  // exact
+		{360, 1280, 720, 640},   // exact
+		{720, 2560, 1080, 1706}, // 21:9: 1706.67 -> 1706
+		{480, 2560, 1080, 1138}, // 21:9: 1137.78 -> 1138
+		{480, 1024, 768, 640},   // 4:3: exact
+	}
+	for _, c := range cases {
+		if got := byHeight(c.rung).Width(c.srcW, c.srcH); got != c.want {
+			t.Errorf("%dp of %dx%d: Width = %d, want %d", c.rung, c.srcW, c.srcH, got, c.want)
+		}
+	}
+	if (Rung{Height: 480}).Width(1920, 0) != 0 {
+		t.Error("zero source height must not divide by zero")
+	}
+}
+
 // The flags whose absence produces bugs that look like something else.
 func TestRenditionArgs_CriticalFlags(t *testing.T) {
 	args := RenditionArgs("http://example/in.mp4", fullLadder[0], "/tmp/out")
@@ -103,9 +137,15 @@ func TestRenditionArgs_CriticalFlags(t *testing.T) {
 	if !strings.Contains(joined, "format=yuv420p") {
 		t.Error("missing format=yuv420p in the filter chain")
 	}
-	// scale=-2 keeps width even; -1 can produce an odd width that H.264 rejects.
+	// Even output dimensions: scale=-2 alone is not enough once
+	// force_original_aspect_ratio is set (see args.go), so force_divisible_by=2
+	// is required. TestRunRendition_EncodesEveryRungForCommonAspectRatios
+	// proves it against a real ffmpeg.
 	if !strings.Contains(joined, "scale=-2:") {
 		t.Error("expected scale=-2 for even width")
+	}
+	if !strings.Contains(joined, "force_divisible_by=2") {
+		t.Error("missing force_divisible_by=2: a 16:9 source at 480p is 853px wide and H.264 rejects odd widths")
 	}
 	if !strings.Contains(joined, "force_original_aspect_ratio=decrease") {
 		t.Error("missing force_original_aspect_ratio=decrease")

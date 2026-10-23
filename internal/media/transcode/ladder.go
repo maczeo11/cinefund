@@ -1,6 +1,9 @@
 package transcode
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 // Rung is one step of the ABR ladder.
 //
@@ -30,12 +33,16 @@ func (r Rung) AverageBandwidth() int { return r.VideoBitrate + r.AudioBitrate }
 // Width returns the even width for a given source aspect ratio. H.264 with
 // yuv420p requires even dimensions in both axes; FFmpeg's scale=-2 does this at
 // encode time and this mirrors it for the RESOLUTION field in the master.
+//
+// It rounds to the NEAREST even number because that is what the encode does
+// (scale ... force_divisible_by=2, see args.go): 853.33px becomes 854, not 852.
+// The master playlist advertises this value, so it has to match the file.
 func (r Rung) Width(srcW, srcH int) int {
 	if srcH == 0 {
 		return 0
 	}
-	w := int(float64(r.Height) * float64(srcW) / float64(srcH))
-	return w &^ 1 // round down to even
+	w := float64(r.Height) * float64(srcW) / float64(srcH)
+	return int(math.Round(w/2)) * 2
 }
 
 var fullLadder = []Rung{
