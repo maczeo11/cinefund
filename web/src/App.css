@@ -1,16 +1,5 @@
+/* Colours and fonts come from index.css (the single source of truth). */
 :root {
-  --ink: #0B0D13;
-  --ink-raised: #121622;
-  --paper: #F1F3F7;
-  --paper-dim: #8B95A5;
-  --paper-faint: #4B5565;
-  --rule: rgba(255, 255, 255, 0.08);
-  --rule-soft: rgba(255, 255, 255, 0.04);
-  --accent: #E5A93C;
-
-  --serif: 'Cinzel', Georgia, 'Times New Roman', serif;
-  --sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-
   --measure: 62ch;
   --gutter: clamp(20px, 5vw, 64px);
 }
@@ -24,6 +13,9 @@
 body {
   background: var(--ink);
   color: var(--paper);
+  /* keep buttons and form fields from drifting to the browser's system colours */
+  accent-color: var(--accent);
+  color-scheme: dark;
   font-family: var(--sans);
   font-size: 15px;
   line-height: 1.65;
@@ -564,7 +556,7 @@ select {
   padding: 8px 0;
   background: none;
   border: none;
-  border-bottom: 1px solid var(--rule);
+  border-bottom: 1px solid var(--field-rule);
   border-radius: 0;
   color: var(--paper);
   font-family: var(--serif);
@@ -599,6 +591,11 @@ textarea:focus,
 select:focus {
   outline: none;
   border-bottom-color: var(--accent);
+  box-shadow: 0 1px 0 0 var(--accent); /* doubles the underline: focus isn't colour-only */
+}
+
+input[aria-invalid='true'] {
+  border-bottom-color: var(--crimson);
 }
 
 .fieldset {
@@ -641,7 +638,7 @@ select:focus {
 .btn:hover:not(:disabled) {
   background: var(--accent);
   border-color: var(--accent);
-  color: var(--paper);
+  color: var(--ink); /* was paper-on-amber, 1.9:1; ink-on-amber is 9.3:1 */
 }
 
 .btn:disabled {
@@ -665,7 +662,12 @@ select:focus {
 }
 
 .notice-done {
-  border-left-color: var(--paper);
+  border-left-color: var(--teal);
+  color: var(--paper);
+}
+
+.notice-error {
+  border-left-color: var(--crimson);
   color: var(--paper);
 }
 
