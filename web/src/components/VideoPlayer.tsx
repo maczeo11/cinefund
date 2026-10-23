@@ -1,19 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
+import type Hls from 'hls.js'
 import { getAuthToken } from '../api'
-
-const HLS_CDN = 'https://cdn.jsdelivr.net/npm/hls.js@1'
-
-declare global {
-  interface Window {
-    Hls?: {
-      isSupported: () => boolean
-      Events: { ERROR: string }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      new (opts: unknown): any
-    }
-    Razorpay?: unknown
-  }
-}
 
 function isSameOrigin(url: string): boolean {
   try {
@@ -21,34 +8,6 @@ function isSameOrigin(url: string): boolean {
   } catch {
     return false
   }
-}
-
-function attachHls(video: HTMLVideoElement, src: string, onFatal: () => void, withAuth: boolean): unknown {
-  if (!window.Hls?.isSupported()) {
-    video.src = src
-    return null
-  }
-  // Auth-gated playlists (private bucket) need the Bearer token on playlist
-  // fetches. Segment URLs are presigned S3 links on another origin, so the
-  // header is only attached same-origin: S3 rejects requests that mix a
-  // presigned query string with an Authorization header.
-  const hls = new window.Hls({
-    capLevelToPlayerSize: true,
-    xhrSetup: withAuth
-      ? (xhr: XMLHttpRequest, url: string) => {
-          if (isSameOrigin(url)) {
-            const token = getAuthToken()
-            if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
-          }
-        }
-      : undefined,
-  })
-  hls.loadSource(src)
-  hls.attachMedia(video)
-  hls.on(window.Hls.Events.ERROR, (_: unknown, data: { fatal: boolean }) => {
-    if (data.fatal) onFatal()
-  })
-  return hls
 }
 
 type Props = { src: string; poster?: string; title?: string; withAuth?: boolean }
@@ -61,32 +20,56 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
   useEffect(() => {
     const video = videoRef.current
     if (!src || !video) return
+    setError(null)
+    setPlaying(false)
     const fail = () => setError('This stream is unavailable.')
 
+    // Safari plays HLS natively (auth rides on the cf_at cookie instead).
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
       video.src = src
-      return
-    }
-    if (window.Hls) {
-      const hls = attachHls(video, src, fail, withAuth) as { destroy?: () => void } | null
-      return () => hls?.destroy?.()
+      return () => {
+        video.removeAttribute('src')
+        video.load()
+      }
     }
 
-    let hls: { destroy?: () => void } | undefined
-    const script = document.createElement('script')
-    script.src = HLS_CDN
-    script.async = true
-    script.onload = () => {
-      hls = attachHls(video, src, fail, withAuth) as { destroy?: () => void }
-    }
-    script.onerror = () => {
-      video.src = src
-    }
-    document.body.appendChild(script)
+    // hls.js is bundled as its own chunk and only fetched when a player mounts,
+    // so it is served from our origin rather than a third-party CDN.
+    let cancelled = false
+    let hls: Hls | undefined
+    import('hls.js')
+      .then(({ default: HlsCtor }) => {
+        if (cancelled) return
+        if (!HlsCtor.isSupported()) {
+          fail()
+          return
+        }
+        // Auth-gated playlists need the Bearer token. Segment URLs are
+        // presigned links on another origin, so the header is attached
+        // same-origin only: S3 rejects a presigned query string combined with
+        // an Authorization header, and we don't want to leak the token anyway.
+        hls = new HlsCtor({
+          capLevelToPlayerSize: true,
+          xhrSetup: withAuth
+            ? (xhr, url) => {
+                if (isSameOrigin(url)) {
+                  const token = getAuthToken()
+                  if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+                }
+              }
+            : undefined,
+        })
+        hls.on(HlsCtor.Events.ERROR, (_event, data) => {
+          if (data.fatal) fail()
+        })
+        hls.loadSource(src)
+        hls.attachMedia(video)
+      })
+      .catch(fail)
 
     return () => {
-      hls?.destroy?.()
-      script.remove()
+      cancelled = true
+      hls?.destroy()
     }
   }, [src, withAuth])
 
@@ -99,7 +82,10 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
       <video
         ref={videoRef}
         controls
+        playsInline
+        preload="metadata"
         poster={poster}
+        aria-label={title}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         className="w-full h-full object-cover"
@@ -128,7 +114,7 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
           {/* Centered Glowing Play Icon */}
           <div className="self-center my-auto pointer-events-none">
             <div className="w-14 h-14 sm:w-16 sm:h-16 rounded-full bg-amber text-night flex items-center justify-center shadow-[0_0_30px_rgba(229,169,60,0.5)] group-hover:scale-110 group-hover:bg-amber-bright transition-transform duration-300">
-              <svg className="w-6 h-6 sm:w-7 sm:h-7 translate-x-0.5 fill-current" viewBox="0 0 24 24">
+              <svg className="w-6 h-6 sm:w-7 sm:h-7 translate-x-0.5 fill-current" viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 5v14l11-7z" />
               </svg>
             </div>
@@ -146,7 +132,7 @@ export default function VideoPlayer({ src, poster, title, withAuth = false }: Pr
           )}
         </div>
       )}
-      {error && <p className="frame-note">{error}</p>}
+      {error && <p className="frame-note" role="alert">{error}</p>}
     </div>
   )
 }

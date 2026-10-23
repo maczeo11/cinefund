@@ -27,7 +27,13 @@ var AllowedVideoMIMETypes = map[string]bool{
 	"video/quicktime":  true,
 	"video/webm":       true,
 	"video/x-matroska": true,
-	"text/plain":       true, // allowed for test
+}
+
+var allowedPurposes = map[transcode.Purpose]bool{
+	transcode.PurposeFilm:    true,
+	transcode.PurposePitch:   true,
+	transcode.PurposeTrailer: true,
+	transcode.PurposeBTS:     true,
 }
 
 // UploadStoreInterface captures the persistence methods required by Handler.
@@ -114,9 +120,13 @@ func (h *Handler) Presign(c *gin.Context) {
 		}
 	}
 
-	purpose := transcode.Purpose(body.Purpose)
+	purpose := transcode.Purpose(strings.ToUpper(strings.TrimSpace(body.Purpose)))
 	if purpose == "" {
 		purpose = transcode.PurposeFilm
+	}
+	if !allowedPurposes[purpose] {
+		httpx.Abort(c, errs.Invalid("INVALID_PURPOSE", "purpose must be one of FILM, PITCH, TRAILER, BTS"))
+		return
 	}
 
 	asset, err := h.store.CreateAsset(c.Request.Context(), body.OwnerID, body.CampaignID, purpose, cleanContentType)

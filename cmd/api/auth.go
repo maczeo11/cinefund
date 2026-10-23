@@ -144,8 +144,13 @@ func JWTAuthMiddleware(secret string, allowDevIdentityHeader bool) gin.HandlerFu
 		authHeader := c.GetHeader("Authorization")
 		if strings.HasPrefix(authHeader, "Bearer ") {
 			tokenStr = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
-		} else if cookie, err := c.Cookie("cf_at"); err == nil && cookie != "" {
-			tokenStr = cookie
+		} else if isSafeMethod(c.Request.Method) {
+			// The cookie exists for native HLS playback, which can't set
+			// headers. Browsers attach cookies automatically, so honouring it
+			// on state-changing requests would open a CSRF hole.
+			if cookie, err := c.Cookie("cf_at"); err == nil && cookie != "" {
+				tokenStr = cookie
+			}
 		}
 
 		if tokenStr != "" {
@@ -197,6 +202,10 @@ func corsConfig(allowDevIdentityHeader bool) cors.Config {
 	}
 }
 
+func isSafeMethod(m string) bool {
+	return m == http.MethodGet || m == http.MethodHead
+}
+
 // RequireAuth ensures that the request has an authenticated caller.
 func RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -214,6 +223,7 @@ func RequireAuth() gin.HandlerFunc {
 
 // FirebaseTokenInfo holds claims returned by Google's tokeninfo endpoint.
 type FirebaseTokenInfo struct {
+	Issuer        string `json:"iss"`
 	Audience      string `json:"aud"`
 	Subject       string `json:"sub"`
 	Email         string `json:"email"`
@@ -244,17 +254,25 @@ func VerifyFirebaseIDToken(ctx context.Context, idToken, expectedProjectID strin
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("invalid token (status %d): %s", resp.StatusCode, string(bodyBytes))
+		// Drain but don't echo Google's body: this error reaches the client.
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+		return nil, fmt.Errorf("invalid token (status %d)", resp.StatusCode)
 	}
 
 	var info FirebaseTokenInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&info); err != nil {
 		return nil, fmt.Errorf("decode tokeninfo: %w", err)
 	}
 
-	if expectedProjectID != "" && info.Audience != expectedProjectID {
-		return nil, fmt.Errorf("token audience mismatch: expected %s, got %s", expectedProjectID, info.Audience)
+	if expectedProjectID != "" {
+		// Firebase ID tokens carry aud=<project> and iss=securetoken/<project>;
+		// checking both pins the token to this project's Firebase Auth.
+		if info.Audience != expectedProjectID {
+			return nil, errors.New("token audience mismatch")
+		}
+		if info.Issuer != "https://securetoken.google.com/"+expectedProjectID {
+			return nil, errors.New("token issuer mismatch")
+		}
 	}
 
 	return &info, nil
@@ -296,7 +314,13 @@ func HandleFirebaseAuth(pool *postgres.Pool, jwtSecret, projectID string) gin.Ha
 			displayName = displayName[:60]
 		}
 
+		// The upsert below links on email, so an unverified address would let
+		// someone claim an existing account just by typing its email.
 		emailVerified := strings.EqualFold(info.EmailVerified, "true")
+		if info.Email == "" || !emailVerified {
+			httpx.Abort(c, errs.Forbidden("EMAIL_NOT_VERIFIED", "a verified email address is required"))
+			return
+		}
 
 		const query = `
 			INSERT INTO users (id, email, password_hash, display_name, role, email_verified, avatar_key, status)

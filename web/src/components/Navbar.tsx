@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
-import AuthModal, { getActiveUser, logout, type UserProfile } from './AuthModal.tsx'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
+import AuthModal from './AuthModal.tsx'
+import Avatar from './Avatar.tsx'
+import { logout, useActiveUser } from '../auth'
 import { getUserPledges } from '../api'
 
 type Props = {
@@ -14,46 +16,42 @@ export default function Navbar({ onHome, onCreate }: Props) {
   const [authOpen, setAuthOpen] = useState(false)
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const [user, setUser] = useState<UserProfile | null>(getActiveUser())
+  const user = useActiveUser()
   const [pledgeCount, setPledgeCount] = useState<number>(0)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const handleAuthChange = () => {
-      const active = getActiveUser()
-      setUser(active)
-      if (active) {
-        setPledgeCount(getUserPledges(active.id).length)
-      } else {
-        setPledgeCount(0)
-      }
-    }
+    const refresh = () => setPledgeCount(user ? getUserPledges(user.id).length : 0)
+    refresh()
+    window.addEventListener('cinefund_pledge_added', refresh)
+    return () => window.removeEventListener('cinefund_pledge_added', refresh)
+  }, [user])
 
-    const handlePledgeChange = () => {
-      const active = getActiveUser()
-      if (active) {
-        setPledgeCount(getUserPledges(active.id).length)
-      }
-    }
+  // Menus close whenever the route changes.
+  useEffect(() => {
+    setMobileMenuOpen(false)
+    setDropdownOpen(false)
+  }, [location.pathname])
 
-    handleAuthChange()
-    window.addEventListener('cinefund_auth_change', handleAuthChange)
-    window.addEventListener('cinefund_pledge_added', handlePledgeChange)
-    return () => {
-      window.removeEventListener('cinefund_auth_change', handleAuthChange)
-      window.removeEventListener('cinefund_pledge_added', handlePledgeChange)
-    }
-  }, [])
-
-  // Close dropdown on click outside
+  // Close dropdown on click outside or Escape
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false)
       }
     }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setDropdownOpen(false)
+        setMobileMenuOpen(false)
+      }
+    }
     document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
   }, [])
 
   function handleSignOut() {
@@ -112,15 +110,16 @@ export default function Navbar({ onHome, onCreate }: Props) {
           </button>
 
           {/* Desktop Navigation Links */}
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden md:flex items-center gap-1" aria-label="Main">
             {navLinks.map(link => {
               const isActive =
                 location.pathname === link.path ||
                 (link.path === '/' && location.pathname.startsWith('/campaigns/'))
               return (
-                <button
+                <NavLink
                   key={link.path}
-                  onClick={() => navigate(link.path)}
+                  to={link.path}
+                  aria-current={isActive ? 'page' : undefined}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${
                     isActive
                       ? 'bg-amber/15 text-amber font-semibold shadow-[0_0_10px_rgba(229,169,60,0.15)]'
@@ -128,7 +127,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                   }`}
                 >
                   {link.label}
-                </button>
+                </NavLink>
               )
             })}
           </nav>
@@ -155,16 +154,11 @@ export default function Navbar({ onHome, onCreate }: Props) {
                     : 'border-white/10 bg-white/[0.04] hover:bg-white/[0.08] hover:border-amber/40'
                 }`}
                 title="Account Menu"
+                aria-label="Account menu"
+                aria-haspopup="menu"
                 aria-expanded={dropdownOpen}
               >
-                {/* User Avatar */}
-                <div className="h-6 w-6 rounded-full bg-amber text-ink font-cinema font-bold text-xs flex items-center justify-center overflow-hidden flex-shrink-0">
-                  {user.photoURL || (user.avatar && user.avatar.startsWith('http')) ? (
-                    <img src={user.photoURL || user.avatar} alt={user.name} className="w-full h-full object-cover" />
-                  ) : (
-                    user.avatar
-                  )}
-                </div>
+                <Avatar user={user} className="h-6 w-6 rounded-full text-xs" />
 
                 <span className="hidden sm:inline font-medium text-silver max-w-[120px] truncate">
                   {user.name}
@@ -197,13 +191,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                   {/* User Profile Card */}
                   <div className="p-3 rounded-xl bg-black/40 border border-white/[0.08] space-y-1.5">
                     <div className="flex items-center gap-2.5">
-                      <div className="h-9 w-9 rounded-xl bg-amber text-ink font-cinema font-bold text-sm flex items-center justify-center overflow-hidden flex-shrink-0">
-                        {user.photoURL || (user.avatar && user.avatar.startsWith('http')) ? (
-                          <img src={user.photoURL || user.avatar} alt={user.name} className="w-full h-full object-cover" />
-                        ) : (
-                          user.avatar
-                        )}
-                      </div>
+                      <Avatar user={user} className="h-9 w-9 rounded-xl text-sm" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
                           <h4 className="font-bold text-silver text-xs truncate">{user.name}</h4>
@@ -285,13 +273,7 @@ export default function Navbar({ onHome, onCreate }: Props) {
                 onClick={openAuth}
                 className="px-3.5 py-1.5 rounded-lg border border-white/15 hover:border-amber/40 bg-white/[0.04] hover:bg-white/[0.08] text-silver hover:text-white text-xs font-medium transition-all cursor-pointer"
               >
-                Sign In
-              </button>
-              <button
-                onClick={openAuth}
-                className="hidden sm:inline-flex px-3.5 py-1.5 rounded-lg bg-amber hover:bg-amber-bright text-ink text-xs font-semibold transition-all shadow-sm cursor-pointer"
-              >
-                Get Started
+                Sign in
               </button>
             </div>
           )}
@@ -301,6 +283,8 @@ export default function Navbar({ onHome, onCreate }: Props) {
             onClick={() => setMobileMenuOpen(o => !o)}
             className="md:hidden p-1.5 rounded-lg text-silver-dim hover:text-white hover:bg-white/[0.05]"
             aria-label="Toggle Navigation"
+            aria-expanded={mobileMenuOpen}
+            aria-controls="mobile-nav"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               {mobileMenuOpen ? (
@@ -315,24 +299,22 @@ export default function Navbar({ onHome, onCreate }: Props) {
 
       {/* Mobile Navigation Drawer */}
       {mobileMenuOpen && (
-        <div className="md:hidden bg-[#0C0E14] border-b border-white/10 px-4 py-3 space-y-1 animate-fadeIn">
+        <nav id="mobile-nav" aria-label="Main" className="md:hidden bg-[#0C0E14] border-b border-white/10 px-4 py-3 space-y-1 animate-fadeIn">
           {navLinks.map(link => (
-            <button
+            <NavLink
               key={link.path}
-              onClick={() => {
-                navigate(link.path)
-                setMobileMenuOpen(false)
-              }}
-              className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
-                location.pathname === link.path
-                  ? 'bg-amber/15 text-amber font-semibold'
-                  : 'text-silver-dim hover:text-white'
-              }`}
+              to={link.path}
+              end
+              className={({ isActive }) =>
+                `block w-full text-left px-3 py-2 rounded-lg text-xs font-medium transition-colors ${
+                  isActive ? 'bg-amber/15 text-amber font-semibold' : 'text-silver-dim hover:text-white'
+                }`
+              }
             >
               {link.label}
-            </button>
+            </NavLink>
           ))}
-        </div>
+        </nav>
       )}
 
       <AuthModal

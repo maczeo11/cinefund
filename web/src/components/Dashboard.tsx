@@ -7,14 +7,27 @@ import HealthBar from './HealthBar.tsx'
 export default function Dashboard() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     getCampaigns()
-      .then(d => setCampaigns((d as Campaign[]) || []))
-      .finally(() => setLoading(false))
+      .then(d => {
+        if (!cancelled) setCampaigns(d || [])
+      })
+      .catch(err => {
+        if (!cancelled) setLoadError((err as Error).message)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
-  if (loading) return <p className="status">Loading dashboard…</p>
+  if (loading) return <p className="status" role="status">Loading dashboard…</p>
+  if (loadError) return <p className="status notice" role="alert">{loadError}</p>
 
   return (
     <div className="max-w-6xl space-y-6">

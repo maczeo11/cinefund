@@ -12,16 +12,27 @@ type Props = { onSelect: (id: string) => void }
 export default function CampaignList({ onSelect }: Props) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [category, setCategory] = useState<(typeof CATEGORIES)[number]>('ALL')
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(1)
   const PAGE_SIZE = 6
 
   useEffect(() => {
+    let cancelled = false
     getCampaigns()
-      .then(data => setCampaigns((data as Campaign[]) || []))
-      .catch(() => {})
-      .finally(() => setLoading(false))
+      .then(data => {
+        if (!cancelled) setCampaigns(data || [])
+      })
+      .catch(err => {
+        if (!cancelled) setLoadError((err as Error).message || 'Could not load films.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const shown = useMemo(() => {
@@ -61,13 +72,17 @@ export default function CampaignList({ onSelect }: Props) {
         <div className="mt-7 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-md">
             <input
+              type="search"
+              aria-label="Search films"
               value={query}
               onChange={e => setQuery(e.target.value)}
-              placeholder="Search by title, director, or reel tagline…"
+              placeholder="Search by title or reel tagline…"
               className="w-full bg-celluloid border border-white/10 rounded-xl px-4 py-2.5 text-sm text-silver placeholder-silver-faint focus:outline-none focus:border-amber/50 focus:ring-1 focus:ring-amber/50 transition-all"
             />
             {query && (
               <button
+                type="button"
+                aria-label="Clear search"
                 onClick={() => setQuery('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-silver-dim hover:text-white"
               >
@@ -89,6 +104,8 @@ export default function CampaignList({ onSelect }: Props) {
           return (
             <button
               key={cat}
+              type="button"
+              aria-pressed={active}
               onClick={() => setCategory(cat)}
               className={`px-3.5 py-1.5 rounded-lg whitespace-nowrap transition-all uppercase tracking-wider ${
                 active
@@ -104,13 +121,21 @@ export default function CampaignList({ onSelect }: Props) {
 
       {/* Loading State */}
       {loading && (
-        <div className="p-12 text-center text-sm font-mono text-silver-dim">
-          <span className="inline-block animate-spin mr-2">✦</span> Threading 35mm film reels…
+        <div className="p-12 text-center text-sm font-mono text-silver-dim" role="status">
+          <span className="inline-block animate-spin mr-2" aria-hidden="true">✦</span> Threading 35mm film reels…
+        </div>
+      )}
+
+      {/* Error State */}
+      {!loading && loadError && (
+        <div className="p-12 text-center bg-celluloid border border-crimson/30 rounded-2xl" role="alert">
+          <p className="font-cinema text-lg text-silver mb-2">The film vault couldn't be opened</p>
+          <p className="text-xs text-silver-dim font-sans">{loadError}</p>
         </div>
       )}
 
       {/* Empty State */}
-      {!loading && shown.length === 0 && (
+      {!loading && !loadError && shown.length === 0 && (
         <div className="p-12 text-center bg-celluloid border border-white/10 rounded-2xl">
           <p className="font-cinema text-lg text-silver mb-2">No reels matching filter</p>
           <p className="text-xs text-silver-dim font-sans mb-4">Try clearing your search or launch a new campaign.</p>
@@ -131,7 +156,16 @@ export default function CampaignList({ onSelect }: Props) {
           return (
             <div
               key={c.id}
+              role="link"
+              tabIndex={0}
+              aria-label={`${c.title} — view film`}
               onClick={() => onSelect(c.id)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || (e.key === ' ' && e.target === e.currentTarget)) {
+                  e.preventDefault()
+                  onSelect(c.id)
+                }
+              }}
               className="group bg-celluloid border border-white/[0.08] hover:border-amber/40 rounded-2xl p-4 sm:p-5 transition-all duration-300 cursor-pointer flex flex-col justify-between hover:shadow-[0_4px_35px_rgba(229,169,60,0.15)] relative overflow-hidden"
             >
               {/* Subtle film grain gradient overlay */}
