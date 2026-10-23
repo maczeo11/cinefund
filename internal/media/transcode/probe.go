@@ -129,7 +129,8 @@ func NewProber(path string) *Prober {
 
 // Run probes the input (usually a presigned URL).
 func (p *Prober) Run(ctx context.Context, input string) (*Probe, error) {
-	cmd := exec.CommandContext(ctx, p.Path, ProbeArgs(input)...) //nolint:gosec // input is a presigned URL from our object store, not user shell input
+	// Restricted like the encode step: ffprobe parses the same untrusted bytes.
+	cmd := exec.CommandContext(ctx, p.Path, withProtocolWhitelist(ProbeArgs(input))...) //nolint:gosec // input is a presigned URL from our object store, not user shell input
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 
